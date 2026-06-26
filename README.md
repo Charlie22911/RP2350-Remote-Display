@@ -53,6 +53,7 @@ Choose an example from the interactive menu. The launcher prepares the repositor
 ## Documentation
 
 - [User guide](docs/README.md): hardware, setup, rendering choices, touch, and RTC use.
+- [Performance expectations](docs/README.md#performance-expectations): bandwidth limits, representative frame rates, and rendering-path guidance.
 - [Protocol reference](docs/protocol.md): wire format, session rules, image transport, and capabilities.
 - [Testing guide](docs/testing.md): source verification and hardware validation.
 - [Troubleshooting](docs/troubleshooting.md): USB, build, rendering, test, and RTC issues.
