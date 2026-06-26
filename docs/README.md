@@ -118,8 +118,9 @@ All rendering commands belong inside `with display.frame():`. Calls such as brig
 
 | Workload | Recommended path |
 |---|---|
-| Static controls, labels, and simple graphics | Primitives and host-rendered text |
-| Frequently changing full-resolution dashboard | `Canvas` with `DirtyTilePresenter` |
+| Static controls, labels, and simple graphics | Primitives and device text or host-rendered text |
+| Live metrics dashboard or bounded control UI | Pico primitives, device text, declared clear regions, and `scroll_rect()` |
+| Frequently changing host-composed full-resolution pixels | `Canvas` with `DirtyTilePresenter` |
 | Reused full-resolution image or icon | Resource cache |
 | Scrolling log, chart, or local animation | `copy_rect()` or `scroll_rect()` |
 | Full-screen animated background | Scale2, followed by sharp full-resolution overlays |
@@ -127,6 +128,9 @@ All rendering commands belong inside `with display.frame():`. Calls such as brig
 | Lower-bandwidth artwork | Palette64 or Palette4, with visual quality tradeoffs |
 
 The full-resolution tile profiles are 18×24, 30×40, and 45×60 pixels. Smaller tiles limit redundant updates around a local change. Larger tiles reduce command overhead for broad changes.
+
+The included `python/examples/dirty_dashboard.py` uses the live-UI path. It draws its static frame once, updates only named text rectangles, and scrolls graph interiors inside the existing framebuffer. Its geometry constants are the shared contract for drawing, clearing, scrolling, and touch hit testing.
+
 
 ### Scale2 rendering
 
@@ -137,28 +141,6 @@ Use Scale2 for animated backgrounds where lower source resolution is acceptable.
 Scale2 writes directly into the normal framebuffer. Draw a Scale2 background first, then draw text, icons, and controls on top. Redraw every overlay that overlaps a changed Scale2 area in the next frame.
 
 Scale2 reduces source pixels and transport data, but it does not guarantee a proportional frame-rate increase. Host rendering, image encoding, USB scheduling, PSRAM writes, and panel presentation still contribute to total frame time.
-
-## Performance expectations
-
-This project is bandwidth-sensitive. Frame rate depends on host rendering and encoding time, USB scheduling and packet overhead, RP2350 PSRAM writes, and panel presentation. The figures below are practical expectations for the included firmware and Python library. They are representative observations, not guaranteed rates for every Linux host or scene.
-
-| Workload | Practical expectation |
-|---|---|
-| Full-screen, full-resolution RGB565 with most pixels changing every frame | The interactive full-resolution RGB plasma demo is a deliberately demanding case and runs at roughly **1 FPS**. A 450×600 RGB565 frame contains 540,000 bytes before packet framing or encoding. |
-| Full-screen Scale2 background | Scale2 sends a 225×300 source image and expands it 2× on the RP2350. Its raw RGB565 source is 135,000 bytes, one quarter of a full-resolution source. It is the preferred path for animated backgrounds where 2× nearest-neighbor pixels are acceptable. |
-| Palette4 or Palette64, including Scale2 variants | Palette modes can lower transport volume for artwork that tolerates quantization. Dithering and palette conversion add host work, so the benefit depends on the image and host. Measure the workload instead of assuming a fixed gain. |
-| Full-resolution dashboards, graphs, and controls with small local changes | `Canvas` with `DirtyTilePresenter` can approach **30 FPS** in favorable cases because it transfers only changed tiles or rectangles. Small, sparse updates are important. A redraw that changes most of the display behaves much closer to a full-screen transfer. |
-| Device primitives, cached assets, `copy_rect()`, and `scroll_rect()` | These paths avoid sending a fresh full-screen image. They are suitable for responsive controls, log views, charts, and UI elements whose changes are spatially limited. |
-
-The plasma demo is useful for comparing modes and measuring a specific host and board:
-
-```bash
-./python/scripts/run_examples.sh
-```
-
-Choose **Plasma transport demo**, then compare RGB565, palette modes, and the Scale2 toggle. It reports live FPS, transfer throughput, host render time, and transfer time.
-
-For dashboards, preserve a host-side `Canvas`, present it with `DirtyTilePresenter`, and update only the regions that changed. Use `region_mode="rect"` when a small changed area inside a tile benefits from a tighter RGB565 update. Reset the presenter after any direct device-side framebuffer operation so its baseline remains correct.
 
 ## Touch and RTC
 

@@ -2,6 +2,8 @@
 
 - Updated the interactive plasma demo with complete visible controls, larger spatial forms, and a muted high-contrast cyclic colour gradient.
 - Kept live full-resolution and half-resolution scale2 operation, palette-mode selection, and dithering controls unchanged.
+- Reworked `examples/dirty_dashboard.py` as a remote-rendered Linux system dashboard using Pico primitives, the firmware-resident font, touch navigation, declared incremental-update regions, and device-side graph scrolling.
+- Added dashboard configuration for network interface, disk target, update rate, and history range.
 
 ## 1.2.15
 

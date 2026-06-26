@@ -67,6 +67,7 @@ Drawing methods run inside `display.frame()`. Connection, brightness, cache mana
 | Half-resolution image transport | `draw_image_scale2()`, `blit_rgb565_scale2()`, `blit_palette4_scale2()`, `blit_palette64_scale2()` |
 | Text | `draw_text()`, `draw_text_box()`, `draw_device_text()`, `measure_device_text()` |
 | Reused images | `cache_rgb565()`, `cache_alpha()`, `cache_palette4()`, `draw_cached()` |
+| Device-rendered live UI | primitives, `draw_device_text()`, `scroll_rect()` |
 | Host-composed updates | `Canvas`, `DirtyTilePresenter` |
 | Framebuffer movement | `copy_rect()`, `scroll_rect()` |
 | Touch | `poll_events()`, `poll_latest_touch()`, `wait_for_touch()` |
@@ -91,7 +92,9 @@ Palette4 and Palette64 are visually lossy. Their optional Floyd-Steinberg dither
 
 Scale2 uses 2× nearest-neighbor expansion. Draw a changing Scale2 background first, then redraw full-resolution overlays that overlap it. Scale2 source tiles are direct transfers and cannot use the cache or `DirtyTilePresenter`.
 
-For full-resolution scenes that change repeatedly, use `Canvas` plus `DirtyTilePresenter`. Use `region_mode="rect"` when small, sparse changes benefit from tighter lossless RGB565 rectangles. Tile profiles are 18×24, 30×40, and 45×60 pixels.
+For a live dashboard or control UI made from text, lines, and bounded panels, prefer Pico-side primitives plus `draw_device_text()`. Draw static walls and labels once, clear only declared value rectangles, and use `scroll_rect()` for graph interiors.
+
+For host-composed full-resolution pixels that change repeatedly, use `Canvas` plus `DirtyTilePresenter`. Use `region_mode="rect"` when small, sparse changes benefit from tighter lossless RGB565 rectangles. Tile profiles are 18×24, 30×40, and 45×60 pixels.
 
 ## Resource cache
 
@@ -113,6 +116,12 @@ The built-in font uses an 8×16 base cell, with integer scales from 1 through 4.
 
 Query `device_font_info()` and `measure_device_text()` outside a frame before building layouts that depend on cell geometry.
 
+## Remote-rendered dashboard
+
+`examples/dirty_dashboard.py` is a Linux system-monitor example rendered almost entirely on the Pico. It uses firmware primitives, the on-device 8×16 font, touch hitboxes, bounded text-clear rectangles, and `scroll_rect()` for graph updates. Static panel walls and labels remain in the framebuffer; ordinary updates send only changed text, graph movement, and new trace segments.
+
+At startup, the terminal menu selects the network interface, disk, target update rate from 1 through 15 FPS, and a 10 through 60 second history window. While it is running, type `m` and press Enter to reopen settings, `s` to print the active monitor settings, or `q` to exit. Tap a card for its fullscreen graph and tap the right-aligned Back button to return. Disk temperature is shown only when `smartctl` can retrieve it.
+
 ## Device-side copy and scroll
 
 `copy_rect()` and `scroll_rect()` move existing RGB565 pixels inside the device framebuffer and run inside `display.frame()`. Overlapping `copy_rect()` operations are safe. Positive scroll X moves pixels right, positive scroll Y moves pixels down, and `fill_color` fills newly exposed pixels.
@@ -132,36 +141,16 @@ RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenti
 
 ## Examples
 
-Start the interactive launcher from the repository root:
-
-```bash
-./python/scripts/run_examples.sh
-```
-
-The launcher finds the repository relative to its own location, creates the repository-local `.venv` when necessary, installs the local package in editable mode, and offers these examples:
-
-| Example | Purpose |
-|---|---|
-| Basic primitives | Direct primitives and host-rendered text. |
-| Graphics transfer modes | RGB565, palette, and image transfer modes. |
-| Interactive plasma | Transport comparison and Scale2 animation. Keyboard controls print at startup. |
-| System dashboard | Touch-enabled CPU, temperature, frequency, memory, disk, network, time, and uptime dashboard. Missing optional host sensors display as unavailable. |
-| Resource cache | Cached full-resolution resources. |
-| Scrolling log | Device-side `scroll_rect()`. |
-| Device text | Firmware-resident bitmap text. |
-| Touch canvas | Touch input and host-composed feedback. |
-| Layout diagnostics | Layout and diagnostic overlays. |
-| RTC | Read the board RTC or synchronize it from NTP after confirmation. |
-
-The system dashboard reads standard Linux host metrics and is intended for Arch, Debian, Ubuntu, and related distributions. It does not require a particular network manager or sensor package. When a temperature, frequency, address, or network counter is unavailable, that field remains usable and displays an unavailable or zero-value reading instead of stopping the example.
-
-The launcher returns to the menu after each example exits. Press Ctrl+C to stop an active example. At the menu, Ctrl+C or an end-of-input signal exits cleanly.
-
-To run an example directly after the local package is installed, use:
-
-```bash
-./.venv/bin/python python/examples/basic_primitives.py
-```
+- `examples/basic_primitives.py`: primitives and host-rendered text.
+- `examples/graphics_modes.py`: RGB565, palette, and image transfer modes.
+- `examples/plasma_interactive.py`: transport comparison and Scale2 animation. Run `./python/examples/run_plasma_interactive.sh`; the program prints its controls at startup.
+- `examples/dirty_dashboard.py`: remote-rendered Linux system dashboard with device text, touch, and incremental graph scrolling.
+- `examples/resource_cache.py`: cached full-resolution resources.
+- `examples/scrolling_log.py`: `scroll_rect()`.
+- `examples/device_text.py`: firmware-resident text.
+- `examples/touch_canvas.py`: touch input.
+- `examples/layout_debug.py`: layout and diagnostic overlays.
+- `examples/rtc_sync.py`: read, write, and NTP RTC synchronization.
 
 ## Related documentation
 
