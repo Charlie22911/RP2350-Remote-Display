@@ -45,11 +45,10 @@ Put the board in BOOTSEL mode when prompted, copy the generated UF2 to its boot 
 After the bootstrap has completed and Linux USB access is active:
 
 ```bash
-source .venv/bin/activate
-python python/examples/basic_primitives.py
+./python/scripts/run_examples.sh
 ```
 
-The display should show a simple panel and text. For a complete application example, see the [Python library guide](python/README.md).
+Choose an example from the interactive menu. The launcher prepares the repository-local `.venv` when needed, installs the local package in editable mode, and returns to the menu when an example exits. Press Ctrl+C to stop a running example or close the launcher while it is at the menu. For a complete application example, see the [Python library guide](python/README.md).
 
 ## Documentation
 

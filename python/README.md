@@ -132,16 +132,34 @@ RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenti
 
 ## Examples
 
-- `examples/basic_primitives.py`: primitives and host-rendered text.
-- `examples/graphics_modes.py`: RGB565, palette, and image transfer modes.
-- `examples/plasma_interactive.py`: transport comparison and Scale2 animation. Run `./python/examples/run_plasma_interactive.sh`; the program prints its controls at startup.
-- `examples/dirty_dashboard.py`: `Canvas` and `DirtyTilePresenter`.
-- `examples/resource_cache.py`: cached full-resolution resources.
-- `examples/scrolling_log.py`: `scroll_rect()`.
-- `examples/device_text.py`: firmware-resident text.
-- `examples/touch_canvas.py`: touch input.
-- `examples/layout_debug.py`: layout and diagnostic overlays.
-- `examples/rtc_sync.py`: read, write, and NTP RTC synchronization.
+Start the interactive launcher from the repository root:
+
+```bash
+./python/scripts/run_examples.sh
+```
+
+The launcher finds the repository relative to its own location, creates the repository-local `.venv` when necessary, installs the local package in editable mode, and offers these examples:
+
+| Example | Purpose |
+|---|---|
+| Basic primitives | Direct primitives and host-rendered text. |
+| Graphics transfer modes | RGB565, palette, and image transfer modes. |
+| Interactive plasma | Transport comparison and Scale2 animation. Keyboard controls print at startup. |
+| System dashboard | Touch-enabled CPU, temperature, frequency, memory, disk, network, time, and uptime dashboard. |
+| Resource cache | Cached full-resolution resources. |
+| Scrolling log | Device-side `scroll_rect()`. |
+| Device text | Firmware-resident bitmap text. |
+| Touch canvas | Touch input and host-composed feedback. |
+| Layout diagnostics | Layout and diagnostic overlays. |
+| RTC | Read the board RTC or synchronize it from NTP after confirmation. |
+
+The launcher returns to the menu after each example exits. Press Ctrl+C to stop an active example. At the menu, Ctrl+C or an end-of-input signal exits cleanly.
+
+To run an example directly after the local package is installed, use:
+
+```bash
+./.venv/bin/python python/examples/basic_primitives.py
+```
 
 ## Related documentation
 
