@@ -25,7 +25,7 @@ The development firmware uses USB vendor ID `0xCAFE` and product ID `0x4010`. Us
 Clone the repository, enter it, and run the Linux bootstrap script:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Charlie22911/RP2350-Remote-Display.git
 cd RP2350-Remote-Display
 ./scripts/bootstrap-linux.sh
 ```
