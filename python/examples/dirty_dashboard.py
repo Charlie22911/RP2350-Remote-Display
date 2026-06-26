@@ -14,14 +14,17 @@ from datetime import datetime
 import math
 import os
 from pathlib import Path
+import shutil
 import socket
+import struct
+import subprocess
 import time
 from typing import Callable, Sequence
 
 try:
     import fcntl
-except ImportError as exc:  # pragma: no cover - Linux-only example
-    raise SystemExit("This example currently requires Linux.") from exc
+except ImportError:  # pragma: no cover - Linux-only fallback
+    fcntl = None
 
 from rp2350_remote_display import Canvas, DirtyTilePresenter, RemoteDisplay, rgb565
 
@@ -101,10 +104,15 @@ class CpuSampler:
         self.max_freq_mhz = self._read_max_freq_mhz()
 
     def sample_usage_percent(self) -> float:
-        line = Path("/proc/stat").read_text(encoding="utf-8").splitlines()[0]
-        fields = [int(field) for field in line.split()[1:]]
-        idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
-        total = sum(fields)
+        contents = safe_read_text("/proc/stat")
+        if not contents:
+            return 0.0
+        try:
+            fields = [int(field) for field in contents.splitlines()[0].split()[1:]]
+            idle = fields[3] + (fields[4] if len(fields) > 4 else 0)
+            total = sum(fields)
+        except (IndexError, ValueError):
+            return 0.0
         if self._previous_total is None or self._previous_idle is None:
             self._previous_total = total
             self._previous_idle = idle
@@ -124,19 +132,22 @@ class CpuSampler:
             "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_cur_freq",
         ]
         for candidate in candidates:
-            path = Path(candidate)
-            if not path.is_file():
+            value = safe_read_text(candidate)
+            if value is None:
                 continue
             try:
-                return float(path.read_text(encoding="utf-8").strip()) / 1000.0
-            except (OSError, ValueError):
+                return float(value.strip()) / 1000.0
+            except ValueError:
                 continue
         mhz_values: list[float] = []
-        for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore").splitlines():
+        cpuinfo = safe_read_text("/proc/cpuinfo")
+        if cpuinfo is None:
+            return None
+        for line in cpuinfo.splitlines():
             if line.lower().startswith("cpu mhz"):
                 try:
                     mhz_values.append(float(line.split(":", 1)[1].strip()))
-                except ValueError:
+                except (IndexError, ValueError):
                     pass
         if mhz_values:
             return sum(mhz_values) / len(mhz_values)
@@ -152,17 +163,18 @@ class CpuSampler:
             temp_path = zone / "temp"
             if not temp_path.is_file():
                 continue
+            raw_text = safe_read_text(temp_path)
+            if raw_text is None:
+                continue
             try:
-                raw = float(temp_path.read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
+                raw = float(raw_text.strip())
+            except ValueError:
                 continue
             temp_c = raw / 1000.0 if raw > 1000 else raw
             if not (0.0 <= temp_c <= 150.0):
                 continue
-            try:
-                zone_type = (zone / "type").read_text(encoding="utf-8").strip().lower()
-            except OSError:
-                zone_type = ""
+            zone_type = safe_read_text(zone / "type")
+            zone_type = zone_type.strip().lower() if zone_type is not None else ""
             if any(token in zone_type for token in ("cpu", "package", "soc", "x86_pkg_temp", "tctl", "core")):
                 preferred.append(temp_c)
             else:
@@ -180,12 +192,12 @@ class CpuSampler:
             "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
         ]
         for candidate in candidates:
-            path = Path(candidate)
-            if not path.is_file():
+            value = safe_read_text(candidate)
+            if value is None:
                 continue
             try:
-                return float(path.read_text(encoding="utf-8").strip()) / 1000.0
-            except (OSError, ValueError):
+                return float(value.strip()) / 1000.0
+            except ValueError:
                 continue
         return None
 
@@ -198,17 +210,19 @@ class NetworkSampler:
 
     def sample(self) -> tuple[str | None, str | None, float, float]:
         iface = primary_interface()
-        ip = interface_ip(iface) if iface is not None else None
+        ip = interface_ip(iface)
         if iface is None:
             self._previous_rx = None
             self._previous_tx = None
             self._previous_time = None
             return None, ip, 0.0, 0.0
         stats_root = Path("/sys/class/net") / iface / "statistics"
+        rx_text = safe_read_text(stats_root / "rx_bytes")
+        tx_text = safe_read_text(stats_root / "tx_bytes")
         try:
-            rx = int((stats_root / "rx_bytes").read_text(encoding="utf-8").strip())
-            tx = int((stats_root / "tx_bytes").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
+            rx = int(rx_text) if rx_text is not None else 0
+            tx = int(tx_text) if tx_text is not None else 0
+        except ValueError:
             return iface, ip, 0.0, 0.0
         now = time.monotonic()
         if self._previous_time is None or self._previous_rx is None or self._previous_tx is None:
@@ -233,15 +247,19 @@ class SystemSampler:
     def sample(self) -> Snapshot:
         timestamp = datetime.now().astimezone()
         uptime_s = read_uptime_seconds()
-        ram_total_kib, ram_available_kib = read_memory_kib("MemTotal"), read_memory_kib("MemAvailable")
+        ram_total_kib, ram_available_kib = read_memory_snapshot_kib()
         ram_used_kib = max(0, ram_total_kib - ram_available_kib)
         ram_total_gib = kib_to_gib(ram_total_kib)
         ram_used_gib = kib_to_gib(ram_used_kib)
         ram_used_percent = percent(ram_used_kib, ram_total_kib)
 
-        stat = os.statvfs("/")
-        disk_total_bytes = stat.f_frsize * stat.f_blocks
-        disk_free_bytes = stat.f_frsize * stat.f_bavail
+        try:
+            stat = os.statvfs("/")
+            disk_total_bytes = stat.f_frsize * stat.f_blocks
+            disk_free_bytes = stat.f_frsize * stat.f_bavail
+        except OSError:
+            disk_total_bytes = 0
+            disk_free_bytes = 0
         disk_used_bytes = max(0, disk_total_bytes - disk_free_bytes)
         disk_total_gib = bytes_to_gib(disk_total_bytes)
         disk_used_gib = bytes_to_gib(disk_used_bytes)
@@ -346,7 +364,7 @@ class DashboardModel:
                 title="Network",
                 rect=(right, bottom, CARD_W, CARD_H),
                 summary_lines=(
-                    f"{(snap.net_iface or 'net')}  {snap.net_ip or 'offline'}",
+                    shorten_text(f"{snap.net_iface or 'net'}  {snap.net_ip or 'offline'}", 25),
                     f"RX {fmt_bps(snap.net_rx_bps)}   TX {fmt_bps(snap.net_tx_bps)}",
                 ),
                 series=(
@@ -357,56 +375,160 @@ class DashboardModel:
         )
 
 
-def read_uptime_seconds() -> float:
+def safe_read_text(path: str | Path) -> str | None:
+    """Return UTF-8 file contents, or ``None`` when a Linux metric is unavailable."""
     try:
-        return float(Path("/proc/uptime").read_text(encoding="utf-8").split()[0])
-    except (OSError, ValueError, IndexError):
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def read_uptime_seconds() -> float:
+    contents = safe_read_text("/proc/uptime")
+    if not contents:
+        return 0.0
+    try:
+        return float(contents.split()[0])
+    except (IndexError, ValueError):
         return 0.0
 
 
-def read_memory_kib(field_name: str) -> int:
-    for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
-        if line.startswith(field_name + ":"):
-            return int(line.split()[1])
-    raise RuntimeError(f"missing /proc/meminfo field: {field_name}")
+def read_memory_snapshot_kib() -> tuple[int, int]:
+    """Return total and available Linux memory, with an older-kernel fallback."""
+    contents = safe_read_text("/proc/meminfo")
+    if not contents:
+        return 0, 0
+    fields: dict[str, int] = {}
+    for line in contents.splitlines():
+        name, separator, remainder = line.partition(":")
+        if not separator:
+            continue
+        parts = remainder.split()
+        if not parts:
+            continue
+        try:
+            fields[name] = int(parts[0])
+        except ValueError:
+            continue
+    total = fields.get("MemTotal", 0)
+    available = fields.get("MemAvailable")
+    if available is None:
+        available = sum(
+            fields.get(name, 0)
+            for name in ("MemFree", "Buffers", "Cached", "SReclaimable")
+        )
+    return max(0, total), max(0, min(available, total))
 
 
 def primary_interface() -> str | None:
-    route = Path("/proc/net/route")
-    if route.is_file():
-        lines = route.read_text(encoding="utf-8").splitlines()[1:]
-        for line in lines:
+    route_contents = safe_read_text("/proc/net/route")
+    if route_contents:
+        for line in route_contents.splitlines()[1:]:
             fields = line.split()
-            if len(fields) >= 4 and fields[1] == "00000000" and int(fields[3], 16) & 2:
+            if len(fields) < 4 or fields[1] != "00000000":
+                continue
+            try:
+                route_flags = int(fields[3], 16)
+            except ValueError:
+                continue
+            if route_flags & 2:
                 return fields[0]
+
     net_class = Path("/sys/class/net")
     if not net_class.is_dir():
         return None
     for iface in sorted(net_class.iterdir()):
         if iface.name == "lo":
             continue
-        try:
-            state = (iface / "operstate").read_text(encoding="utf-8").strip()
-        except OSError:
-            continue
-        if state == "up":
+        state = safe_read_text(iface / "operstate")
+        if state is not None and state.strip() == "up":
             return iface.name
     return None
 
 
 def interface_ip(iface: str | None) -> str | None:
+    """Return a primary address while tolerating minimal Linux installations.
+
+    Arch and Debian-family systems normally provide ``ip`` through iproute2,
+    which gives the most reliable result in containers and network namespaces.
+    The ioctl and procfs fallbacks keep the dashboard useful when that command
+    is absent or unavailable.
+    """
     if not iface:
         return None
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        request = iface.encode("utf-8")[:15]
-        request = request + b"\0" * (16 - len(request))
-        result = fcntl.ioctl(sock.fileno(), 0x8915, request)
-        return socket.inet_ntoa(result[20:24])
-    except OSError:
+
+    ipv4 = interface_ipv4_from_ip_command(iface)
+    if ipv4 is not None:
+        return ipv4
+
+    if fcntl is not None:
+        try:
+            encoded_name = iface.encode("utf-8")[:15]
+            # SIOCGIFADDR expects a full ifreq-sized buffer. Supplying only the
+            # 16-byte name is accepted by some Python/Linux combinations but
+            # raises SystemError: buffer overflow on others.
+            ifreq = struct.pack("256s", encoded_name)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                result = fcntl.ioctl(sock.fileno(), 0x8915, ifreq)
+            if len(result) >= 24:
+                return socket.inet_ntoa(result[20:24])
+        except (OSError, SystemError, UnicodeError, ValueError):
+            pass
+
+    return interface_ipv6(iface)
+
+
+def interface_ipv4_from_ip_command(iface: str) -> str | None:
+    ip_command = shutil.which("ip")
+    if ip_command is None:
         return None
-    finally:
-        sock.close()
+    try:
+        result = subprocess.run(
+            [ip_command, "-4", "-o", "addr", "show", "dev", iface, "scope", "global"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1.0,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        try:
+            address = fields[fields.index("inet") + 1].split("/", 1)[0]
+            socket.inet_aton(address)
+        except (IndexError, ValueError, OSError):
+            continue
+        return address
+    return None
+
+
+def interface_ipv6(iface: str) -> str | None:
+    """Use the first non-link-local IPv6 address as a last-resort display value."""
+    contents = safe_read_text("/proc/net/if_inet6")
+    if not contents:
+        return None
+    candidates: list[str] = []
+    for line in contents.splitlines():
+        fields = line.split()
+        if len(fields) != 6 or fields[5] != iface:
+            continue
+        hex_address = fields[0]
+        if len(hex_address) != 32:
+            continue
+        try:
+            groups = [hex_address[index:index + 4] for index in range(0, 32, 4)]
+            address = ":".join(groups)
+            packed = socket.inet_pton(socket.AF_INET6, address)
+            formatted = socket.inet_ntop(socket.AF_INET6, packed)
+        except OSError:
+            continue
+        if not formatted.lower().startswith("fe80:"):
+            return formatted
+        candidates.append(formatted)
+    return candidates[0] if candidates else None
 
 
 def bytes_to_gib(value: int) -> float:
@@ -421,6 +543,12 @@ def percent(part: int | float, total: int | float) -> float:
     if total <= 0:
         return 0.0
     return max(0.0, min(100.0, (part / total) * 100.0))
+
+
+def shorten_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(1, limit - 3)] + "..."
 
 
 def fmt_duration(seconds: float) -> str:
@@ -496,7 +624,7 @@ def draw_header(canvas: Canvas, snapshot: Snapshot) -> None:
     canvas.text(f"Uptime {fmt_duration(snapshot.uptime_s)}", PADDING + 128, PADDING + 34, MUTED, size=12)
     iface_text = snapshot.net_iface or "net"
     ip_text = snapshot.net_ip or "offline"
-    canvas.text(f"{iface_text}  {ip_text}", PADDING + 16, PADDING + 56, WHITE, size=13)
+    canvas.text(shorten_text(f"{iface_text}  {ip_text}", 37), PADDING + 16, PADDING + 56, WHITE, size=13)
     canvas.text("Live host metrics", 450 - PADDING - 108, PADDING + 56, MUTED, size=12)
 
 

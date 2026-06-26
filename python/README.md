@@ -145,13 +145,15 @@ The launcher finds the repository relative to its own location, creates the repo
 | Basic primitives | Direct primitives and host-rendered text. |
 | Graphics transfer modes | RGB565, palette, and image transfer modes. |
 | Interactive plasma | Transport comparison and Scale2 animation. Keyboard controls print at startup. |
-| System dashboard | Touch-enabled CPU, temperature, frequency, memory, disk, network, time, and uptime dashboard. |
+| System dashboard | Touch-enabled CPU, temperature, frequency, memory, disk, network, time, and uptime dashboard. Missing optional host sensors display as unavailable. |
 | Resource cache | Cached full-resolution resources. |
 | Scrolling log | Device-side `scroll_rect()`. |
 | Device text | Firmware-resident bitmap text. |
 | Touch canvas | Touch input and host-composed feedback. |
 | Layout diagnostics | Layout and diagnostic overlays. |
 | RTC | Read the board RTC or synchronize it from NTP after confirmation. |
+
+The system dashboard reads standard Linux host metrics and is intended for Arch, Debian, Ubuntu, and related distributions. It does not require a particular network manager or sensor package. When a temperature, frequency, address, or network counter is unavailable, that field remains usable and displays an unavailable or zero-value reading instead of stopping the example.
 
 The launcher returns to the menu after each example exits. Press Ctrl+C to stop an active example. At the menu, Ctrl+C or an end-of-input signal exits cleanly.
 
