@@ -82,21 +82,21 @@ The **host** is the Linux computer running this Python library. The **Pico** is 
 
 - **Host rendering** means Python generates final image pixels or an Alpha8 text mask, then transfers those pixels to the Pico. `draw_image()`, `draw_text()`, `Canvas`, and `DirtyTilePresenter` use host rendering. The Pico writes the received pixels into its framebuffer.
 - **Pico rendering** means Python sends compact drawing commands and the Pico firmware produces the pixels locally. `clear()`, `fill_rect()`, `stroke_rect()`, `line()`, `polyline()`, `draw_device_text()`, `draw_cached()`, `copy_rect()`, and `scroll_rect()` use Pico rendering.
-- **Pico-rendered text** is specifically `draw_device_text()`. It uses the Pico firmware's resident 8×16 bitmap font. The older API term **device text** refers to this same Pico-rendered path.
+- **Pico-rendered text** is specifically `draw_device_text()`. It uses the Pico firmware's resident 8×16 bitmap font.
 
-The Pico keeps the resulting framebuffer pixels after a frame ends. It does not keep a display list of commands. Draw static Pico-rendered content once, then send only commands for areas that actually change.
+To reduce bandwidth and compute demands, the Pico keeps the resulting framebuffer pixels after a frame ends. It does not keep a display list of commands. Draw static Pico-rendered content once, then send commands to update framebuffer areas that actually change.
 
 ## Image modes and rendering choices
 
 | Mode | Suitable use |
 |---|---|
-| RGB565 RAW | Exact full-color image data |
+| RGB565 RAW | Exact full-color image data, slow but highest quality |
 | RGB565 RLE | Flat graphics, repeated pixels, and simple UI art |
 | RGB565 auto | Per-tile RAW or RLE selection |
 | Alpha8 | Tinted masks and host-rendered text |
 | Palette4 | Lower-bandwidth artwork that tolerates limited color detail |
 | Palette64 | Better palette fidelity with lower bandwidth than RGB565 |
-| Scale2 | Animated 225×300 source background expanded to 450×600 |
+| Scale2 | Half resolution canvas expanded to fit 450×600 framebuffer. |
 
 Palette4 and Palette64 are visually lossy. Their optional Floyd-Steinberg dithering changes source-to-palette mapping on the host. Use RGB565 when every output pixel must match the source.
 
@@ -153,7 +153,7 @@ RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenti
 
 Run examples from the repository root after activating the virtual environment. The examples are intentionally small, each demonstrating one rendering or device-management decision.
 
-| Example | What it does | Why it matters |
+| Example Script | What it does | Goal |
 |---|---|---|
 | `examples/basic_primitives.py` | Draws a panel, border, accent bar, button, and **host-rendered** Alpha8 text with direct primitive commands. | Establishes the simplest frame workflow and shows that primitives can be Pico-rendered while `draw_text()` remains host-rendered. |
 | `examples/device_text.py` | Draws a compact status panel with `draw_device_text()` and the Pico's resident 8×16 font. | Shows the Pico-rendered text path, fixed cell geometry, and compact UTF-8 commands without Alpha8 mask transfers. |
