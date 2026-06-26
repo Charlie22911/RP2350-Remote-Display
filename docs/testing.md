@@ -78,9 +78,7 @@ Static scenes remain visible for five seconds by default. The touch stage invite
 | Palette4 and Palette64 Scale2 | Successful transfer plus visual inspection of the expanded output |
 | Touch and dynamic presentation | Interactive observation and explicit protocol assertions |
 
-For a future exact Scale2 check, construct the expected 450×600 destination after source-domain quantization and 2× expansion. Comparing a 225×300 source CRC directly with the display framebuffer is invalid.
-
-The test leaves the board RTC unchanged. Use the RTC examples or host API when RTC behavior needs separate validation.
+Comparing a 225×300 source CRC directly with the 2x scaled display framebuffer is invalid, due to the the image scaling.
 
 ## Test assets and reports
 
