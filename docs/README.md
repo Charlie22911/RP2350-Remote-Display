@@ -100,7 +100,7 @@ Run it with:
 python hello_display.py
 ```
 
-The public API is covered in [python/README.md](../python/README.md). The examples directory contains complete working programs for image modes, touch, device text, caching, dirty updates, layout tools, scrolling, plasma animation, and RTC access.
+The public API is covered in [python/README.md](../python/README.md), including a guide to each complete example and the rendering path it demonstrates.
 
 ## Display model
 
@@ -114,22 +114,31 @@ The device keeps one framebuffer in external PSRAM. A frame transaction groups c
 
 All rendering commands belong inside `with display.frame():`. Calls such as brightness control, cache management, RTC access, device-font inspection, and framebuffer CRC diagnostics run outside a frame.
 
+### Rendering terminology
+
+The **host** is the Linux computer running the Python application. The **Pico** is the RP2350 board and its firmware.
+
+- **Host rendering** means the host creates final pixels or an Alpha8 text mask and transfers them to the Pico. `Canvas`, `DirtyTilePresenter`, `draw_image()`, and `draw_text()` are host-rendering paths.
+- **Pico rendering** means the host sends commands and the Pico creates pixels in its framebuffer. Primitives, `draw_device_text()`, cached-resource replay, `copy_rect()`, and `scroll_rect()` are Pico-rendering paths.
+
+The Pico retains framebuffer pixels after each frame, but it does not retain a command list. Static Pico-rendered walls, labels, and grid lines can be drawn once. Later frames should contain only commands for regions that change.
+
 ### Choose a rendering path
 
 | Workload | Recommended path |
 |---|---|
-| Static controls, labels, and simple graphics | Primitives and device text or host-rendered text |
-| Live metrics dashboard or bounded control UI | Pico primitives, device text, declared clear regions, and `scroll_rect()` |
-| Frequently changing host-composed full-resolution pixels | `Canvas` with `DirtyTilePresenter` |
-| Reused full-resolution image or icon | Resource cache |
-| Scrolling log, chart, or local animation | `copy_rect()` or `scroll_rect()` |
-| Full-screen animated background | Scale2, followed by sharp full-resolution overlays |
-| Pixel-exact image output | RGB565 RAW or RLE |
-| Lower-bandwidth artwork | Palette64 or Palette4, with visual quality tradeoffs |
+| Static controls, labels, and simple graphics | Pico rendering with primitives and Pico-rendered text, or host rendering with Alpha8 text when host fonts are required |
+| Live metrics dashboard or bounded control UI | Pico rendering with primitives, `draw_device_text()`, declared clear regions, and `scroll_rect()` |
+| Frequently changing host-rendered full-resolution pixels | Host rendering with `Canvas` and `DirtyTilePresenter` |
+| Reused full-resolution image or icon | Upload once, then Pico-render from the resource cache |
+| Scrolling log, chart, or local animation | Pico rendering with `copy_rect()` or `scroll_rect()` |
+| Full-screen animated background | Host-rendered Scale2 source, followed by sharp full-resolution overlays |
+| Pixel-exact image output | Host-rendered RGB565 RAW or RLE |
+| Lower-bandwidth artwork | Host-rendered Palette64 or Palette4, with visual quality tradeoffs |
 
 The full-resolution tile profiles are 18×24, 30×40, and 45×60 pixels. Smaller tiles limit redundant updates around a local change. Larger tiles reduce command overhead for broad changes.
 
-The included `python/examples/dirty_dashboard.py` uses the live-UI path. It draws its static frame once, updates only named text rectangles, and scrolls graph interiors inside the existing framebuffer. Its geometry constants are the shared contract for drawing, clearing, scrolling, and touch hit testing.
+The included `python/examples/dirty_dashboard.py` uses the Pico-rendered live-UI path. The host samples Linux metrics and calculates graph points. The Pico draws the static frame once, updates only named text rectangles, and scrolls graph interiors inside the existing framebuffer. Its geometry constants are the shared contract for drawing, clearing, scrolling, and touch hit testing.
 
 
 ### Scale2 rendering
@@ -140,7 +149,7 @@ Use Scale2 for animated backgrounds where lower source resolution is acceptable.
 
 Scale2 writes directly into the normal framebuffer. Draw a Scale2 background first, then draw text, icons, and controls on top. Redraw every overlay that overlaps a changed Scale2 area in the next frame.
 
-Scale2 reduces source pixels and transport data, but it does not guarantee a proportional frame-rate increase. Host rendering, image encoding, USB scheduling, PSRAM writes, and panel presentation still contribute to total frame time.
+Scale2 reduces source pixels and transport data, but it does not guarantee a proportional frame-rate increase. Host-side pixel generation, image encoding, USB scheduling, PSRAM writes, and panel presentation still contribute to total frame time.
 
 ## Touch and RTC
 

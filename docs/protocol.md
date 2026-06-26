@@ -111,7 +111,7 @@ A full-screen Scale2 source is 225×300. It overwrites the destination pixels di
 
 ## Device text, touch, and RTC
 
-The firmware includes a flash-resident GNU Unifont grid font. `FONT_INFO` exposes font metadata, `MEASURE_TEXT` reports device-side metrics, and `DRAW_TEXT` draws UTF-8 text inside a frame. The device-text feature is useful when the host needs predictable cell geometry without transferring a host-rendered alpha mask.
+The firmware includes a flash-resident GNU Unifont grid font. `FONT_INFO` exposes font metadata, `MEASURE_TEXT` reports Pico-rendered text metrics, and `DRAW_TEXT` draws UTF-8 text inside a frame. The protocol feature named device text is Pico-rendered text: it is useful when the host needs predictable cell geometry without transferring a host-rendered Alpha8 mask.
 
 Touch events include coordinates, press state, and contact count. The firmware coalesces move activity to prioritize current positions.
 

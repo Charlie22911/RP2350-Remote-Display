@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Remote-rendered interactive Linux system dashboard.
+"""Pico-rendered interactive Linux system dashboard.
 
-The display is drawn with Pico-side primitives and the firmware-resident font.
-The host samples metrics, calculates line-graph points, and sends compact draw
+The Linux host samples metrics and calculates line-graph points. The Pico draws
+primitives and its firmware-resident font into the framebuffer from compact
 commands. Touch a category card for a fullscreen graph; touch Back to return.
 """
 
@@ -1444,7 +1444,7 @@ def run() -> None:
     config = default_monitor_config()
     if sys.stdin.isatty():
         config = configure_dashboard(config)
-    print("Opening remote-rendered dashboard.")
+    print("Opening Pico-rendered dashboard.")
     print_console_controls()
     model = DashboardModel(config)
     next_sample = time.monotonic() + config.sample_interval_s
@@ -1471,7 +1471,7 @@ def run() -> None:
                 if command == "s":
                     print_monitor_status(config, model)
                 elif command in {"q", "quit", "exit"}:
-                    print("Remote-rendered dashboard stopped.")
+                    print("Pico-rendered dashboard stopped.")
                     return
                 else:
                     print("Unknown command. Use m, s, q, or Ctrl+C.")
@@ -1504,4 +1504,4 @@ if __name__ == "__main__":
     try:
         run()
     except KeyboardInterrupt:
-        print("\nRemote-rendered dashboard stopped.")
+        print("\nPico-rendered dashboard stopped.")

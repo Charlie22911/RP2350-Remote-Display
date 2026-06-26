@@ -2,7 +2,7 @@
 
 - Updated the interactive plasma demo with complete visible controls, larger spatial forms, and a muted high-contrast cyclic colour gradient.
 - Kept live full-resolution and half-resolution scale2 operation, palette-mode selection, and dithering controls unchanged.
-- Reworked `examples/dirty_dashboard.py` as a remote-rendered Linux system dashboard using Pico primitives, the firmware-resident font, touch navigation, declared incremental-update regions, and device-side graph scrolling.
+- Reworked `examples/dirty_dashboard.py` as a Pico-rendered Linux system dashboard using Pico primitives, the firmware-resident font, touch navigation, declared incremental-update regions, and Pico framebuffer graph scrolling.
 - Added dashboard configuration for network interface, disk target, update rate, and history range.
 
 ## 1.2.15
@@ -71,7 +71,7 @@
 ## 1.2.0
 
 - Bumps the host protocol target to version 10.
-- Adds `copy_rect()` and `scroll_rect()` for lossless device-side framebuffer movement.
+- Adds `copy_rect()` and `scroll_rect()` for lossless Pico framebuffer movement.
 - Adds `Canvas.copy_rect()` and `Canvas.scroll_rect()` as host-side mirrors for CRC checks and deterministic composition.
 - Adds optional `DirtyTilePresenter(region_mode="rect")` for lossless changed sub-rectangles inside each changed tile.
 - Retains the existing tile-wide dirty mode as the default.

@@ -1,6 +1,11 @@
 # RP2350 Remote Display
 
-RP2350 Remote Display lets a Linux host render a user interface on a Waveshare RP2350 Touch AMOLED 2.41 board over USB. The host owns the application and drawing commands. The RP2350 drives the 450×600 AMOLED panel, maintains the framebuffer, reports touch input, and exposes the board RTC.
+RP2350 Remote Display connects a Linux host computer to a Waveshare RP2350 Touch AMOLED 2.41 board over USB. The host owns the application. The RP2350, called the Pico in this documentation, drives the 450×600 AMOLED panel, maintains the framebuffer, reports touch input, and exposes the board RTC.
+
+Two rendering terms are used consistently:
+
+- **Host rendering**: the Linux host creates the final pixels, then transfers RGB565, Alpha8, or palette image data to the Pico. `Canvas` and `DirtyTilePresenter` follow this path.
+- **Pico rendering**: the Linux host sends compact primitive, text, cache, copy, or scroll commands; the Pico firmware turns those commands into framebuffer pixels. The framebuffer persists between frames, but the Pico does not retain a reusable command list.
 
 The project includes firmware, a Python library, examples, and a hardware functional test.
 
@@ -25,7 +30,7 @@ The development firmware uses USB vendor ID `0xCAFE` and product ID `0x4010`. Us
 Clone the repository, enter it, and run the Linux bootstrap script:
 
 ```bash
-git clone https://github.com/Charlie22911/RP2350-Remote-Display.git
+git clone <repository-url>
 cd RP2350-Remote-Display
 ./scripts/bootstrap-linux.sh
 ```
@@ -45,15 +50,15 @@ Put the board in BOOTSEL mode when prompted, copy the generated UF2 to its boot 
 After the bootstrap has completed and Linux USB access is active:
 
 ```bash
-./python/scripts/run_examples.sh
+source .venv/bin/activate
+python python/examples/basic_primitives.py
 ```
 
-Choose an example from the interactive menu. The launcher prepares the repository-local `.venv` when needed, installs the local package in editable mode, and returns to the menu when an example exits. Press Ctrl+C to stop a running example or close the launcher while it is at the menu. For a complete application example, see the [Python library guide](python/README.md).
+The display should show a simple panel and text. For a complete application example, see the [Python library guide](python/README.md).
 
 ## Documentation
 
 - [User guide](docs/README.md): hardware, setup, rendering choices, touch, and RTC use.
-- [Performance expectations](docs/README.md#performance-expectations): bandwidth limits, representative frame rates, and rendering-path guidance.
 - [Protocol reference](docs/protocol.md): wire format, session rules, image transport, and capabilities.
 - [Testing guide](docs/testing.md): source verification and hardware validation.
 - [Troubleshooting](docs/troubleshooting.md): USB, build, rendering, test, and RTC issues.

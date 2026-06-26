@@ -44,5 +44,5 @@
 
 ## 1.2.0
 
-- Renders and CRC-verifies device-side `COPY_RECT` and `SCROLL_RECT` operations.
+- Renders and CRC-verifies Pico framebuffer `COPY_RECT` and `SCROLL_RECT` operations.
 - Retains whole-tile dirty presentation as the bouncing-ball baseline.
