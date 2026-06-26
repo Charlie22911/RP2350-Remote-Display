@@ -1,0 +1,42 @@
+name: Python checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  unit-tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Check release metadata
+        run: python scripts/check-version-consistency.py
+      - name: Install package and test dependencies
+        run: python -m pip install -e "./python[dev]"
+      - name: Run unit tests
+        run: python -m pytest python/tests
+
+  functional-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release metadata
+        run: python scripts/check-version-consistency.py
+      - name: Install deterministic layout font
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes fontconfig fonts-dejavu-core
+      - name: Validate functional-test layout
+        run: ./functional-test/run.sh --preflight-only

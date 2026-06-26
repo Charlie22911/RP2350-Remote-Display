@@ -1,0 +1,42 @@
+name: Firmware build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake ninja-build gcc-arm-none-eabi
+      - name: Run renderer copy-scroll host harness
+        run: |
+          gcc -std=c11 -Wall -Wextra -Werror \
+            -Ifirmware/tests/mocks \
+            -Ifirmware/firmware \
+            firmware/tests/renderer_copy_scroll_harness.c \
+            -o /tmp/rpd-renderer-copy-scroll
+          /tmp/rpd-renderer-copy-scroll
+      - name: Fetch Pico SDK and TinyUSB
+        run: |
+          git clone --depth 1 --single-branch --branch 2.2.0 \
+            https://github.com/raspberrypi/pico-sdk.git "$RUNNER_TEMP/pico-sdk"
+          git -C "$RUNNER_TEMP/pico-sdk" submodule update --init --depth 1 lib/tinyusb
+      - name: Build firmware
+        run: |
+          cmake -S firmware -B build/firmware -G Ninja \
+            -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk" \
+            -DPICO_BOARD=waveshare_rp2350_touch_amoled_2.41 \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/firmware --parallel
+      - name: Upload UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: rp2350-remote-display-uf2
+          path: build/firmware/rp2350_remote_display.uf2
+          if-no-files-found: error

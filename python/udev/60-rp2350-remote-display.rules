@@ -1,0 +1,2 @@
+# RP2350 Remote Display development firmware (USB VID:PID CAFE:4010)
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="cafe", ATTR{idProduct}=="4010", MODE="0660", GROUP="rp2350-display", TAG+="uaccess"

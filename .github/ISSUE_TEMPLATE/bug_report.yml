@@ -1,0 +1,46 @@
+name: Bug report
+description: Report a reproducible problem with firmware, the Python package, or the functional test.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Firmware
+        - Python package
+        - Functional test
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions and environment
+      description: Include firmware version, protocol version, Python version, Linux distribution and version, kernel version, and board revision.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior and logs
+    validations:
+      required: true

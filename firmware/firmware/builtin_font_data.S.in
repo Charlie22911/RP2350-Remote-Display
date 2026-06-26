@@ -1,0 +1,11 @@
+/* CMake-generated absolute asset path. The bitmap payload remains in flash. */
+.section .rodata.rpd_unifont, "a", %progbits
+.balign 4
+.global rpd_builtin_font_blob_start
+.type rpd_builtin_font_blob_start, %object
+rpd_builtin_font_blob_start:
+.incbin "@RPD_UNIFONT_ASM_PATH@"
+.balign 4
+.global rpd_builtin_font_blob_end
+.type rpd_builtin_font_blob_end, %object
+rpd_builtin_font_blob_end:

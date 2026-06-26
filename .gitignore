@@ -1,0 +1,45 @@
+# Python environments and build products
+.venv/
+.verify-venv/
+**/.venv/
+venv/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+site/
+
+# Functional-test output
+functional-test/reports/
+
+# CMake and firmware build products
+firmware/build/
+firmware/build-*/
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.elf
+*.bin
+*.hex
+*.map
+*.uf2
+qspi.pio.h
+
+# Editor and operating-system files
+.vscode/
+.idea/
+
+# Committed GNU Unifont firmware assets
+!firmware/assets/
+!firmware/assets/unifont_all-17.0.04.bin
+!firmware/assets/unifont_all-17.0.04.hex.gz
+
+# Checked-in release firmware
+!/firmware/releases/
+!/firmware/releases/*.uf2
+!/firmware/releases/SHA256SUMS
