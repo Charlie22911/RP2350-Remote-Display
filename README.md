@@ -79,6 +79,20 @@ VERSION           Current project release used by firmware and package metadata
 .github/          Issue forms, pull-request template, and continuous integration
 ```
 
+## TODO
+
+- [ ] Add UART support
+- [ ] Investigate lossless packet or tile compression
+- [ ] Support other display modules
+  - [ ] Different-resolution LCDs
+  - [ ] Monochrome OLEDs
+  - [ ] E-paper displays
+- [ ] Generalize display resolution, pixel format, and update constraints
+- [ ] Add performance telemetry and benchmarking
+- [ ] Add protocol trace capture and replay
+- [ ] Expand functional tests for new transports and displays
+- [ ] Document supported hardware, wiring, and firmware updates
+
 ## License and notices
 
 Project code is released under the MIT License. See [LICENSE](LICENSE). The repository includes material with additional notices and licenses. See [NOTICE.md](NOTICE.md) and the notices within the firmware and functional-test directories.
