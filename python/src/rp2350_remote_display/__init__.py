@@ -12,6 +12,7 @@ from .display import (
     RemoteDisplayAccessError,
     RemoteDisplayError,
     RemoteDisplayTimeout,
+    RemoteDisplayTransportError,
     RemoteProtocolError,
     ResourceCacheInfo,
     ResourceUploadStats,
@@ -23,7 +24,7 @@ from .layout import CoordinateSpace, DebugOverlay, Layout, Rect
 from .rtc import NtpQueryError, NtpSample, RtcNtpSyncResult, RtcReading, query_ntp
 from .protocol import PROTOCOL_VERSION, TILE_PROFILES, TileProfile, rgb565
 
-__version__ = "1.2.16"
+__version__ = "1.2.17.dev0"
 
 __all__ = [
     "__version__",
@@ -44,6 +45,7 @@ __all__ = [
     "RemoteDisplayAccessError",
     "RemoteDisplayError",
     "RemoteDisplayTimeout",
+    "RemoteDisplayTransportError",
     "RemoteProtocolError",
     "NtpQueryError",
     "NtpSample",

@@ -5,7 +5,10 @@ import unittest
 
 from rp2350_remote_display.display import DisplayInfo, RemoteDisplay
 from rp2350_remote_display.protocol import (
+    CAP_PALETTE4_TILES,
+    CAP_PALETTE64_TILES,
     CAP_RESOURCE_CACHE,
+    CODEC_PALETTE64,
     CODEC_RLE,
     MSG_ACK,
     MSG_RESOURCE_BEGIN,
@@ -13,6 +16,7 @@ from rp2350_remote_display.protocol import (
     MSG_RESOURCE_END,
     PACKET_FLAG_TILE_CONTENT_CRC32,
     PIXEL_RGB565,
+    PIXEL_INDEX6,
     PROTOCOL_VERSION,
     Packet,
     RESOURCE_BEGIN_STRUCT,
@@ -35,7 +39,7 @@ class ResourceCacheProtocolTests(unittest.TestCase):
             45,
             60,
             4096,
-            CAP_RESOURCE_CACHE,
+            CAP_RESOURCE_CACHE | CAP_PALETTE4_TILES | CAP_PALETTE64_TILES,
         )
         display._active_frame_id = None
         display._strict_packet_crc = strict_packet_crc
@@ -80,6 +84,30 @@ class ResourceCacheProtocolTests(unittest.TestCase):
 
     def test_protocol_version(self) -> None:
         self.assertEqual(PROTOCOL_VERSION, 16)
+
+    def test_palette64_resource_uses_the_standard_six_bit_wire_format(self) -> None:
+        display = self.make_display()
+        palette = [0x0000, 0x1234, 0xABCD, 0xFFFF]
+        stats = display.cache_palette64(9, 2, 2, palette, bytes((0, 1, 2, 3)))
+
+        resource_id, width, height, pixel_format, codec, encoded_length = RESOURCE_BEGIN_STRUCT.unpack(
+            display._writes[0][1]
+        )
+        self.assertEqual(
+            (resource_id, width, height, pixel_format, codec),
+            (9, 2, 2, PIXEL_INDEX6, CODEC_PALETTE64),
+        )
+        chunk = display._writes[1][1]
+        encoded = chunk[RESOURCE_CHUNK_PREFIX_STRUCT.size:]
+        self.assertEqual(len(encoded), encoded_length)
+        self.assertEqual(encoded[:9], b"\x04\x00\x00\x34\x12\xcd\xab\xff\xff")
+        self.assertEqual(encoded[9:], b"\x40\x20\x0c")
+        self.assertEqual(stats.codec, CODEC_PALETTE64)
+
+    def test_palette64_resource_rejects_an_out_of_range_index(self) -> None:
+        display = self.make_display()
+        with self.assertRaises(ValueError):
+            display.cache_palette64(9, 1, 1, [0x0000], b"\x01")
 
 
 if __name__ == "__main__":

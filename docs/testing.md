@@ -12,6 +12,8 @@ From the repository root:
 
 This creates or reuses `.venv`, installs the Python package with development dependencies, runs Python unit tests, validates the built-in font asset, runs the functional-test preflight, and executes available native harnesses.
 
+Continuous integration runs the Python unit suite on Linux with Python 3.10 through 3.14 and on Windows with Python 3.14. A separate Linux job runs this complete verification script, including the renderer, built-in-font, and RTC native harnesses. Wheel and source-distribution builds are installed on both Linux and Windows. Windows jobs are hardware-independent and do not claim native WinUSB board support.
+
 Build the Python distribution when preparing a package artifact:
 
 ```bash

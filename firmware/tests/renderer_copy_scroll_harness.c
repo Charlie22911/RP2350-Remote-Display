@@ -13,6 +13,16 @@ void *rp_mem_calloc(size_t count, size_t size)
     return calloc(count, size);
 }
 
+void *rp_mem_malloc(size_t size)
+{
+    return malloc(size);
+}
+
+void rp_mem_free(void *ptr)
+{
+    free(ptr);
+}
+
 uint32_t rpd_builtin_font_glyph_count(void)
 {
     return 127011u;
@@ -70,6 +80,7 @@ bool AMOLED_2IN41_BeginFullWidthRows(uint32_t start_y, uint32_t end_y, const uin
 }
 
 #include "../firmware/renderer.c"
+#include "../firmware/resource_cache.c"
 
 static uint16_t pixel(uint16_t x, uint16_t y)
 {
@@ -155,6 +166,31 @@ static void test_scroll_directions_and_fill(void)
     assert(!renderer_scroll_rect(449u, 0u, 2u, 1u, 0, 0, 0u));
 }
 
+static void test_line_clipping_and_work_bounds(void)
+{
+    renderer_clear(0u);
+    assert(renderer_line(UINT16_MAX, UINT16_MAX, 0u, 0u, 0xF800u, 1u));
+    assert(pixel(0u, 0u) == 0xF800u);
+    assert(pixel(449u, 449u) == 0xF800u);
+
+    renderer_clear(0u);
+    assert(renderer_line(60000u, 60000u, UINT16_MAX, UINT16_MAX, 0x07E0u, 1u));
+    assert(pixel(449u, 599u) == 0u);
+
+    assert(!renderer_line(0u, 0u, 449u, 599u, 0xFFFFu,
+                          (uint8_t)(RPD_LINE_MAX_THICKNESS + 1u)));
+    assert(pixel(0u, 0u) == 0u);
+
+    static const uint8_t over_budget_polyline[] = {
+        0xFFu, 0xFFu, RPD_LINE_MAX_THICKNESS, 3u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+        0xC1u, 0x01u, 0x57u, 0x02u,
+        0x00u, 0x00u, 0x00u, 0x00u,
+    };
+    assert(!renderer_polyline(over_budget_polyline, sizeof(over_budget_polyline)));
+    assert(pixel(0u, 0u) == 0u);
+}
+
 static void test_palette64_decode(void)
 {
     /* Palette = [black, red, green], index stream = [0, 1, 2, 2, 1, 0]. */
@@ -216,6 +252,37 @@ static void test_palette64_scale2_decode(void)
                                RPD_CODEC_PALETTE64, encoded, (uint16_t)(sizeof(encoded) - 1u)));
 }
 
+static void test_palette64_resource_cache(void)
+{
+    static const uint8_t encoded[] = {
+        3u,
+        0x00u, 0x00u,
+        0x00u, 0xF8u,
+        0xE0u, 0x07u,
+        0x40u, 0x20u, 0x08u, 0x01u, 0x00u,
+    };
+    static const uint8_t invalid_index[] = {
+        1u,
+        0x00u, 0x00u,
+        0x01u,
+    };
+
+    rpd_resource_cache_init();
+    assert(rpd_resource_cache_encoded_data_valid(3u, 2u, RPD_PIXEL_INDEX6,
+                                                 RPD_CODEC_PALETTE64, encoded, sizeof(encoded)));
+    assert(rpd_resource_cache_define(7u, 3u, 2u, RPD_PIXEL_INDEX6,
+                                     RPD_CODEC_PALETTE64, encoded, sizeof(encoded)));
+    assert(rpd_resource_cache_contains(7u));
+    renderer_clear(0u);
+    assert(rpd_resource_cache_draw(7u, 10u, 20u, 0u));
+    assert(pixel(11u, 20u) == 0xF800u);
+    assert(rpd_resource_cache_release(7u));
+
+    assert(!rpd_resource_cache_encoded_data_valid(1u, 1u, RPD_PIXEL_INDEX6,
+                                                  RPD_CODEC_PALETTE64,
+                                                  invalid_index, sizeof(invalid_index)));
+}
+
 static void test_terminal_grid_text_metrics(void)
 {
     static const uint8_t narrow[] = "CPU";
@@ -245,8 +312,10 @@ int main(void)
     assert(renderer_init());
     test_overlap_copy();
     test_scroll_directions_and_fill();
+    test_line_clipping_and_work_bounds();
     test_palette64_decode();
     test_palette64_scale2_decode();
+    test_palette64_resource_cache();
     test_terminal_grid_text_metrics();
     return 0;
 }

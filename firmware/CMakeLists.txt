@@ -13,12 +13,14 @@ include(pico_sdk_import.cmake)
 
 file(READ "${CMAKE_CURRENT_LIST_DIR}/../VERSION" RPD_RELEASE_VERSION)
 string(STRIP "${RPD_RELEASE_VERSION}" RPD_RELEASE_VERSION)
-string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+$" RPD_RELEASE_VERSION_FORMAT "${RPD_RELEASE_VERSION}")
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)(\\.dev[0-9]+)?$"
+    RPD_RELEASE_VERSION_FORMAT "${RPD_RELEASE_VERSION}")
 if (NOT RPD_RELEASE_VERSION_FORMAT)
-    message(FATAL_ERROR "VERSION must contain a semantic version such as 1.2.16")
+    message(FATAL_ERROR "VERSION must contain a release or development version such as 1.2.17 or 1.2.17.dev0")
 endif()
+set(RPD_RELEASE_VERSION_CORE "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
 
-project(rp2350_remote_display_firmware VERSION "${RPD_RELEASE_VERSION}" LANGUAGES C CXX ASM)
+project(rp2350_remote_display_firmware VERSION "${RPD_RELEASE_VERSION_CORE}" LANGUAGES C CXX ASM)
 
 pico_sdk_init()
 
@@ -40,8 +42,9 @@ configure_file(
 
 # USB bcdDevice contains four BCD digits. The project convention packs a one-digit
 # major, one-digit minor, and one- or two-digit patch release into that field.
-# For example, project release 1.2.16 maps to USB release code 0x1216.
-string(REGEX MATCH "^([0-9])\\.([0-9])\\.([0-9][0-9]?)$" RPD_RELEASE_VERSION_BCD_FORMAT "${RPD_RELEASE_VERSION}")
+# For example, project version 1.2.17.dev0 maps to USB release code 0x1217.
+string(REGEX MATCH "^([0-9])\\.([0-9])\\.([0-9][0-9]?)$"
+    RPD_RELEASE_VERSION_BCD_FORMAT "${RPD_RELEASE_VERSION_CORE}")
 if (NOT RPD_RELEASE_VERSION_BCD_FORMAT)
     message(FATAL_ERROR
         "VERSION must use one-digit major/minor and a one- or two-digit patch release for USB bcdDevice encoding")
@@ -55,7 +58,10 @@ if (RPD_USB_BCD_PATCH_LENGTH EQUAL 1)
 endif()
 set(RPD_USB_BCD_DEVICE_DEFAULT "0x${RPD_USB_BCD_MAJOR}${RPD_USB_BCD_MINOR}${RPD_USB_BCD_PATCH}")
 
-set(RPD_SYS_CLOCK_KHZ 250000 CACHE STRING "RP2350 system clock in kHz")
+set(RPD_SYS_CLOCK_KHZ 250000 CACHE STRING
+    "RP2350 system clock in kHz (use 150000 as a conservative fallback)")
+set(RPD_PSRAM_MAX_SCK_HZ 133000000 CACHE STRING
+    "PSRAM target ceiling in Hz (use 109000000 for the data-sheet limit)")
 set(RPD_USB_VID 0xCAFE CACHE STRING "USB vendor ID as a C integer literal")
 set(RPD_USB_PID 0x4010 CACHE STRING "USB product ID as a C integer literal")
 set(RPD_USB_BCD_DEVICE "${RPD_USB_BCD_DEVICE_DEFAULT}" CACHE STRING
@@ -63,6 +69,22 @@ set(RPD_USB_BCD_DEVICE "${RPD_USB_BCD_DEVICE_DEFAULT}" CACHE STRING
 
 if (NOT RPD_SYS_CLOCK_KHZ MATCHES "^[0-9]+$")
     message(FATAL_ERROR "RPD_SYS_CLOCK_KHZ must be an integer number of kHz")
+endif()
+if (RPD_SYS_CLOCK_KHZ LESS 120000 OR RPD_SYS_CLOCK_KHZ GREATER 250000)
+    message(FATAL_ERROR "RPD_SYS_CLOCK_KHZ must be between 120000 and 250000 kHz")
+endif()
+message(STATUS "RP2350 system clock: ${RPD_SYS_CLOCK_KHZ} kHz")
+if (NOT RPD_PSRAM_MAX_SCK_HZ MATCHES "^[0-9]+$")
+    message(FATAL_ERROR "RPD_PSRAM_MAX_SCK_HZ must be an integer number of Hz")
+endif()
+if (RPD_PSRAM_MAX_SCK_HZ LESS 50000000 OR RPD_PSRAM_MAX_SCK_HZ GREATER 133000000)
+    message(FATAL_ERROR "RPD_PSRAM_MAX_SCK_HZ must be between 50000000 and 133000000 Hz")
+endif()
+message(STATUS "PSRAM target ceiling: ${RPD_PSRAM_MAX_SCK_HZ} Hz")
+if (RPD_PSRAM_MAX_SCK_HZ GREATER 109000000)
+    message(WARNING
+        "The default PSRAM target is performance-tuned above the 109 MHz data-sheet limit. "
+        "Use -DRPD_PSRAM_MAX_SCK_HZ=109000000 if stability is preferred.")
 endif()
 
 add_executable(rp2350_remote_display
@@ -102,6 +124,7 @@ target_include_directories(rp2350_remote_display PRIVATE
 
 target_compile_definitions(rp2350_remote_display PRIVATE
     RPD_SYS_CLOCK_KHZ=${RPD_SYS_CLOCK_KHZ}u
+    RPD_PSRAM_MAX_SCK_HZ=${RPD_PSRAM_MAX_SCK_HZ}u
     RPD_USB_VID=${RPD_USB_VID}u
     RPD_USB_PID=${RPD_USB_PID}u
     RPD_USB_BCD_DEVICE=${RPD_USB_BCD_DEVICE}u
@@ -135,6 +158,7 @@ target_link_libraries(rp2350_remote_display PRIVATE
     hardware_exception
     hardware_sync
     pico_flash
+    pico_unique_id
 )
 
 pico_set_program_name(rp2350_remote_display "RP2350 Remote Display")

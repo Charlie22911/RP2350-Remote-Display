@@ -23,12 +23,22 @@ def main() -> int:
     action.add_argument("--sync-ntp", action="store_true", help="query NTP on this host, then write the board RTC")
     parser.add_argument("--server", default="time.cloudflare.com", help="NTP server for --sync-ntp")
     parser.add_argument("--timeout", type=float, default=2.0, help="NTP timeout in seconds")
+    parser.add_argument(
+        "--max-offset-seconds",
+        type=float,
+        default=86_400.0,
+        help="reject NTP samples farther than this from the host clock (default: 86400)",
+    )
     args = parser.parse_args()
 
     try:
         with RemoteDisplay.open(timeout_ms=3000) as display:
             if args.sync_ntp:
-                result = display.sync_rtc_from_ntp(args.server, timeout=args.timeout)
+                result = display.sync_rtc_from_ntp(
+                    args.server,
+                    timeout=args.timeout,
+                    max_offset_seconds=args.max_offset_seconds,
+                )
                 print(f"NTP server: {result.sample.server} ({result.sample.server_address})")
                 print(f"NTP stratum: {result.sample.stratum}")
                 print(f"NTP round trip: {result.sample.round_trip_seconds:.4f} s")

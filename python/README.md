@@ -1,15 +1,17 @@
 # Python library
 
-`rp2350-remote-display` is the Linux host library for RP2350 Remote Display. It opens the board over USB, checks protocol compatibility, sends drawing commands, receives touch events, and provides helpers for images, text, caching, dirty updates, layout, diagnostics, and RTC access.
+`rp2350-remote-display` is the Linux host library for RP2350 Remote Display. It opens the board over USB, checks protocol compatibility, sends drawing commands, receives touch events, and provides helpers for images, text, caching, dirty updates, layout, diagnostics, and RTC access. Windows 11 users can run this Linux host through the documented experimental WSL 2 USB-forwarding path.
 
-This checkout packages release **1.2.16** of the project and Python library. It requires firmware release **1.2.16**, which speaks USB **protocol 16**.
+This checkout is development version **1.2.17.dev0** of the project and Python library. Use firmware from the same release or checkout; both sides speak USB **protocol 16**.
 
 ## Requirements
 
-- Python 3.10 or newer.
+- Python 3.10 through 3.14.
 - A board running compatible firmware.
 - PyUSB and a system libusb backend.
 - Linux USB permission to claim the vendor interface.
+
+Direct USB hosting is supported on Linux. On Windows 11, native BOOTSEL flashing works without this package, while the host application currently runs through experimental WSL 2 forwarding. Native WinUSB setup is not supported. See the [Windows 11 guide](../docs/windows-11.md).
 
 ## Install from this repository
 
@@ -61,12 +63,12 @@ Drawing methods run inside `display.frame()`. Connection, brightness, cache mana
 
 | Area | Main API |
 |---|---|
-| Connection | `RemoteDisplay.open()`, `ping()`, `DisplayInfo` |
+| Connection | `RemoteDisplay.open()`, `ping()`, `recover_session()`, `DisplayInfo` |
 | Frames and primitives | `frame()`, `clear()`, `fill_rect()`, `stroke_rect()`, `line()`, `polyline()` |
 | Images | `draw_image()`, `blit_rgb565()`, `blit_alpha()`, `blit_palette4()`, `blit_palette64()` |
 | Half-resolution image transport | `draw_image_scale2()`, `blit_rgb565_scale2()`, `blit_palette4_scale2()`, `blit_palette64_scale2()` |
 | Text | `draw_text()`, `draw_text_box()`, `draw_device_text()`, `measure_device_text()` |
-| Reused images | `cache_rgb565()`, `cache_alpha()`, `cache_palette4()`, `draw_cached()` |
+| Reused images | `cache_rgb565()`, `cache_alpha()`, `cache_palette4()`, `cache_palette64()`, `draw_cached()` |
 | Pico-rendered live UI | primitives, `draw_device_text()`, `scroll_rect()` |
 | Host-rendered canvas updates | `Canvas`, `DirtyTilePresenter` |
 | Framebuffer movement | `copy_rect()`, `scroll_rect()` |
@@ -75,6 +77,14 @@ Drawing methods run inside `display.frame()`. Connection, brightness, cache mana
 | RTC | `read_rtc()`, `set_rtc()`, `sync_rtc_from_ntp()` |
 
 The exported `rgb565()` helper converts 8-bit RGB components to the 16-bit display format.
+
+## Session recovery and command limits
+
+A protocol error, transport failure, frame abort, or uncertain reply invalidates the negotiated session. After catching one of those errors, call `display.recover_session()` before opening another frame. Recovery drains stale replies, performs a new `HELLO`, and resets the device resource cache, so upload cached resources again before drawing them.
+
+Synchronous replies and errors are matched to their request sequence; delayed replies from timed-out requests are discarded. `ping()` accepts at most 64 payload bytes. Lines and polylines are clipped to the canvas, accept thickness up to 32 pixels, and reject a command whose clipped raster work would exceed 1,000,000 pixel-write attempts.
+
+Firmware exposes a stable serial derived from the RP2350 board identity. When more than one board is attached, select one with `RemoteDisplay.open(serial_number="...")`; Linux callers may also use `bus=` and `address=` for the current USB attachment. Bus and address can change after reconnecting, so prefer the serial for persistent configuration.
 
 ## Rendering terminology
 
@@ -108,7 +118,7 @@ For frequently changing full-resolution pixels that the host must compose, use *
 
 ## Resource cache
 
-The session-local resource cache is suited to repeated full-resolution icons, masks, sprites, and small panels. Upload a resource outside a frame with `cache_rgb565()`, `cache_alpha()`, or `cache_palette4()`, then replay it inside a frame with `draw_cached()`. A firmware reset or a new USB session clears the cache, so applications must upload their resources again.
+The session-local resource cache is suited to repeated full-resolution icons, masks, sprites, and small panels. Upload a resource outside a frame with `cache_rgb565()`, `cache_alpha()`, `cache_palette4()`, or `cache_palette64()`, then replay it inside a frame with `draw_cached()`. A firmware reset or a new USB session clears the cache, so applications must upload their resources again.
 
 The cache holds up to 64 resources and 256 KiB of combined encoded data. Use `resource_cache_info()` to inspect usage and `release_cached()` or `clear_cached()` to reclaim space. Scale2 transfers cannot use the cache.
 
@@ -147,7 +157,7 @@ Mirror these operations with `Canvas.copy_rect()` or `Canvas.scroll_rect()` when
 
 Touch events report panel coordinates with a top-left origin. The firmware coalesces move events so `poll_latest_touch()` is appropriate for drag feedback.
 
-RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenticated SNTP request from the host, writes the resulting UTC value to the board, and reads it back. It does not set the Linux system clock. Check `RtcReading.oscillator_valid` after a power-loss event.
+RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenticated SNTP request from the host, writes the resulting UTC value to the board, and reads it back. By default it rejects samples more than 86,400 seconds from the host clock; set `max_offset_seconds=` to a smaller positive bound, or pass `None` only when deliberately disabling that plausibility check. It does not set the Linux system clock. Check `RtcReading.oscillator_valid` after a power-loss event.
 
 ## Examples
 
@@ -158,13 +168,13 @@ Run examples from the repository root after activating the virtual environment. 
 | `examples/basic_primitives.py` | Draws a panel, border, accent bar, button, and **host-rendered** Alpha8 text with direct primitive commands. | Establishes the simplest frame workflow and shows that primitives can be Pico-rendered while `draw_text()` remains host-rendered. |
 | `examples/device_text.py` | Draws a compact status panel with `draw_device_text()` and the Pico's resident 8×16 font. | Shows the Pico-rendered text path, fixed cell geometry, and compact UTF-8 commands without Alpha8 mask transfers. |
 | `examples/graphics_modes.py` | Presents the same generated artwork with RGB565 RAW, RGB565 RLE, Palette4, and dithered Palette4. | Makes the bandwidth-versus-image-quality tradeoff visible instead of theoretical. |
-| `examples/plasma_interactive.py` | Animates a generated plasma effect and lets the operator compare full-resolution transfer with Scale2 and palette choices. | Measures actual host, USB, framebuffer, and panel performance on the connected system. Run `./python/examples/run_plasma_interactive.sh`. |
+| `examples/plasma_interactive.py` | Animates a generated plasma effect and lets the operator compare full-resolution transfer with Scale2 and palette choices. | Measures actual host, USB, framebuffer, and panel performance on the connected system. Run `python python/examples/plasma_interactive.py`. |
 | `examples/dirty_dashboard.py` | Samples Linux CPU, memory, disk, and network metrics; the host calculates values and graph points while the Pico renders the UI, device text, touch navigation, and scrolling plots. | Reference implementation for an efficient live UI: static Pico-rendered layout once, bounded clears for changing text, and `scroll_rect()` for graph history. |
 | `examples/resource_cache.py` | Uploads one RGB565 icon into the Pico resource cache, then replays it many times. | Shows when a repeated image should be transferred once and drawn locally thereafter. |
 | `examples/scrolling_log.py` | Draws Pico-rendered log lines, then scrolls the existing framebuffer region before adding the next line. | Demonstrates that moving existing Pico framebuffer pixels avoids retransmitting unchanged log content. |
 | `examples/touch_canvas.py` | Reads touch events and overlays a marker by composing a fresh **host-rendered** `Canvas` for each update. | Shows the contrasting dirty-tile path, where the host owns the full pixel model and `DirtyTilePresenter` transfers only changes. |
 | `examples/layout_debug.py` | Renders design-space coordinates, widget bounds, text boxes, chart helpers, and tile boundaries. | Helps validate coordinate transforms and inspect why a host-rendered or Pico-rendered layout lands where it does. |
-| `examples/rtc_sync.py` | Reads the board RTC or performs one host-side NTP query and writes the resulting UTC time to the board. | Keeps time synchronization explicit: it updates the Pico RTC, not the Linux system clock. Run `./python/examples/run_rtc_sync.sh` for the interactive wrapper. |
+| `examples/rtc_sync.py` | Reads the board RTC or performs one host-side NTP query and writes the resulting UTC time to the board. | Keeps time synchronization explicit: it updates the Pico RTC, not the Linux system clock. Run `python python/examples/rtc_sync.py --help` for its options. |
 
 ## Related documentation
 
@@ -172,6 +182,7 @@ Run examples from the repository root after activating the virtual environment. 
 - [Protocol reference](../docs/protocol.md)
 - [Testing guide](../docs/testing.md)
 - [Troubleshooting](../docs/troubleshooting.md)
+- [Windows 11 guide](../docs/windows-11.md)
 
 ## License
 

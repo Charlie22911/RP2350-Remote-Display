@@ -20,6 +20,12 @@ Install the supplied rule, log out and back in, then reconnect the board:
 
 The command adds the selected user to the `rp2350-display` group. A newly added group does not apply to an existing login session.
 
+## Windows cannot open the normal firmware device
+
+Native Windows host operation is not currently supported. The vendor-specific normal-firmware interface does not automatically bind to WinUSB, and the project does not install or validate a native libusb backend. Do not confuse this with BOOTSEL mode, which appears as a normal removable drive and can be used directly from Windows.
+
+Use the experimental WSL 2 forwarding workflow in the [Windows 11 guide](windows-11.md). If the device disappears after a reset or unplug, run `usbipd list` and attach its current bus ID again.
+
 ## PyUSB cannot find a backend
 
 Install the system libusb package. The bootstrap installs it on supported distributions. On another Linux distribution, install the package that provides the libusb-1.0 shared library and restart the Python environment.
@@ -83,10 +89,13 @@ The test expects DejaVu Sans from normal Linux font locations. The bootstrap ins
 
 ## The firmware is unstable at the default clock
 
-The default build uses a 250 MHz RP2350 system clock. Validate USB, panel output, touch, PSRAM behavior, and temperature on the specific board. Rebuild at a lower clock for comparison:
+The default build intentionally uses a 250 MHz RP2350 system clock and a 133 MHz maximum requested PSRAM serial clock; the divider produces about 125 MHz PSRAM SCK. Use the conservative profile when diagnosing a board-specific stability issue:
 
 ```bash
-./firmware/scripts/build.sh --clean --clock-khz 200000 --sdk /path/to/pico-sdk
+./firmware/scripts/build.sh --clean \
+  --clock-khz 150000 \
+  --psram-max-sck-hz 109000000 \
+  --sdk /path/to/pico-sdk
 ```
 
 ## RTC is unavailable or reports invalid time

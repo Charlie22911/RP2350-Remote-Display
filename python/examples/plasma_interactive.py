@@ -8,11 +8,16 @@ import math
 import os
 from pathlib import Path
 import sys
-import termios
 import time
-import tty
 from dataclasses import dataclass
 from typing import Final
+
+try:
+    import termios
+    import tty
+except ImportError:  # pragma: no cover - exercised by Windows imports
+    termios = None
+    tty = None
 
 from PIL import Image, ImageChops
 
@@ -82,6 +87,8 @@ class TerminalKeys:
     """
 
     def __init__(self) -> None:
+        if termios is None or tty is None:
+            raise RuntimeError("interactive terminal controls currently require a POSIX host")
         try:
             self._fd = os.open("/dev/tty", os.O_RDONLY | os.O_NONBLOCK)
         except OSError as exc:

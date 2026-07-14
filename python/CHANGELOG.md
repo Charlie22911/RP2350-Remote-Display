@@ -1,3 +1,21 @@
+## Unreleased
+
+- Identifies post-1.2.16 development builds as `1.2.17.dev0` instead of reusing the published release version.
+- Adds Python 3.14 and Windows-safe package/unit-test coverage while retaining Linux as the supported direct-USB host.
+- Documents native Windows BOOTSEL flashing and the experimental WSL 2 USB-forwarding path.
+- Preserves the 250 MHz system-clock and approximately 125 MHz PSRAM performance profile while exposing documented system-clock and PSRAM-ceiling build overrides.
+- Makes allocator startup null-safe, rejects allocation-size overflow, bounds PSRAM QMI waits, and starts watchdog coverage earlier in boot.
+- Clips line and polyline geometry before rendering and enforces thickness and raster-work budgets on both host and firmware.
+- Quiesces active display presentation during recovery, adds staged-transfer expiry, and reserves reply-queue capacity under USB bursts.
+- Advertises touch only after successful initialization, suppresses transient I²C failures, clears a stuck press after sustained failure, and resynchronizes held contacts after a new session.
+- Adds Palette64 resource caching with encoded-index validation on both sides of the protocol.
+- Adds a stable per-board USB serial number and host selection by serial number, bus, or address.
+- Matches replies and errors by sequence, quarantines late responses, bounds pending/event queues, and adds `recover_session()` with explicit resource-cache invalidation.
+- Normalizes PyUSB failures into the public transport exception hierarchy while preserving the original error during cleanup.
+- Validates the complete `HELLO_REPLY`, enforces incoming CRC in strict mode, and aligns ping and primitive limits with firmware.
+- Hardens NTP synchronization with peer validation, monotonic timing, era unfolding, and a configurable plausibility bound.
+- Pins CI actions and the Pico SDK, runs every hardware-independent harness in CI, and builds and installs distributions on Linux and Windows.
+
 ## 1.2.16
 
 - Updated the interactive plasma demo with complete visible controls, larger spatial forms, and a muted high-contrast cyclic colour gradient.

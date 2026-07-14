@@ -25,8 +25,16 @@
 // min deselect pulse width = 50ns
 #define PSRAM_MIN_DESELECT 0.000000050f
 
-// from psram datasheet - max Freq at 3.3v
-#define PSRAM_MAX_SCK_HZ 109000000.f
+// The performance build retains the board's established ~125 MHz PSRAM clock.
+// Set RPD_PSRAM_MAX_SCK_HZ=109000000 for the conservative data-sheet ceiling.
+#ifndef RPD_PSRAM_MAX_SCK_HZ
+#define RPD_PSRAM_MAX_SCK_HZ 133000000u
+#endif
+#define PSRAM_MAX_SCK_HZ RPD_PSRAM_MAX_SCK_HZ
+
+// Bound every direct-mode QMI wait. A missing or wedged device must fail
+// allocator initialization instead of hanging before the watchdog is active.
+#define PSRAM_QMI_WAIT_ITERATIONS 1000000u
 
 #ifdef __cplusplus
 extern "C"

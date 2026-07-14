@@ -29,6 +29,8 @@
 #include "DEV_Config.h"
 #include "qspi_pio.h"
 
+#define DEV_I2C_TIMEOUT_US 5000u
+
 uint g_pwm_slice;
 uint g_dma_tx_channel;
 dma_channel_config g_dma_tx_config;
@@ -62,29 +64,40 @@ void DEV_SPI_Write_nByte(uint8_t pData[], uint32_t Len)
 /**
  * I2C
 **/
-void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value)
+bool DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value)
 {
     uint8_t data[2] = {reg, Value};
-    i2c_write_blocking(I2C_PORT, addr, data, 2, false);
+    return i2c_write_timeout_us(I2C_PORT, addr, data, sizeof(data), false,
+                                DEV_I2C_TIMEOUT_US) == (int)sizeof(data);
 }
 
-void DEV_I2C_Write_nByte(uint8_t addr, uint8_t *pData, uint32_t Len)
+bool DEV_I2C_Write_nByte(uint8_t addr, const uint8_t *pData, uint32_t Len)
 {
-    i2c_write_blocking(I2C_PORT, addr, pData, Len, false);
+    return pData != NULL &&
+           i2c_write_timeout_us(I2C_PORT, addr, pData, Len, false,
+                                DEV_I2C_TIMEOUT_US) == (int)Len;
 }
 
-uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg)
+bool DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg, uint8_t *Value)
 {
-    uint8_t buf;
-    i2c_write_blocking(I2C_PORT,addr,&reg,1,true);
-    i2c_read_blocking(I2C_PORT,addr,&buf,1,false);
-    return buf;
+    if (Value == NULL ||
+        i2c_write_timeout_us(I2C_PORT, addr, &reg, 1u, true,
+                             DEV_I2C_TIMEOUT_US) != 1) {
+        return false;
+    }
+    return i2c_read_timeout_us(I2C_PORT, addr, Value, 1u, false,
+                               DEV_I2C_TIMEOUT_US) == 1;
 }
 
-void DEV_I2C_Read_nByte(uint8_t addr,uint8_t reg, uint8_t *pData, uint32_t Len)
+bool DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len)
 {
-    i2c_write_blocking(I2C_PORT,addr,&reg,1,true);
-    i2c_read_blocking(I2C_PORT,addr,pData,Len,false);
+    if (pData == NULL || Len == 0u ||
+        i2c_write_timeout_us(I2C_PORT, addr, &reg, 1u, true,
+                             DEV_I2C_TIMEOUT_US) != 1) {
+        return false;
+    }
+    return i2c_read_timeout_us(I2C_PORT, addr, pData, Len, false,
+                               DEV_I2C_TIMEOUT_US) == (int)Len;
 }
 
 /**

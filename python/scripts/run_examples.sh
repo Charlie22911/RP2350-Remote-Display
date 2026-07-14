@@ -79,8 +79,7 @@ ensure_environment() {
 }
 
 pause_after_example() {
-    local ignored
-    if ! IFS= read -r -p 'Press Enter to return to the menu... ' ignored; then
+    if ! IFS= read -r -p 'Press Enter to return to the menu... ' _; then
         printf '\nInput closed. Closing example launcher.\n'
         exit 0
     fi

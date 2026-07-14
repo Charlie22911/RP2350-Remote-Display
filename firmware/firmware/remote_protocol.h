@@ -11,6 +11,10 @@
 #define RPD_SCREEN_WIDTH 450u
 #define RPD_SCREEN_HEIGHT 600u
 
+/* Bound primitive work so a valid packet cannot starve the main loop/watchdog. */
+#define RPD_LINE_MAX_THICKNESS 32u
+#define RPD_LINE_MAX_WORK 1000000u
+
 #define RPD_TILE_SMALL_WIDTH 18u
 #define RPD_TILE_SMALL_HEIGHT 24u
 #define RPD_TILE_MEDIUM_WIDTH 30u
@@ -356,9 +360,10 @@ enum {
     RPD_CAP_PALETTE64_SCALE2 = 1u << 26,
 };
 
-void rpd_protocol_init(void);
+void rpd_protocol_init(bool touch_available);
 void rpd_protocol_task(void);
 void rpd_protocol_display_task(void);
+bool rpd_protocol_touch_sync_required(void);
 void rpd_protocol_send_touch(uint16_t x, uint16_t y, bool pressed, uint8_t contacts);
 
 #endif

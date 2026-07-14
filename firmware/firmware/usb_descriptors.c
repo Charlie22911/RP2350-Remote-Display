@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "pico/unique_id.h"
+
 #include "usb_descriptors.h"
 
 enum {
@@ -26,7 +28,7 @@ static const tusb_desc_device_t device_descriptor = {
     .bcdDevice = RPD_USB_BCD_DEVICE,
     .iManufacturer = 0x01,
     .iProduct = 0x02,
-    .iSerialNumber = 0x00,
+    .iSerialNumber = 0x03,
     .bNumConfigurations = 0x01,
 };
 
@@ -39,7 +41,7 @@ static const char *string_descriptors[] = {
     (const char[]){0x09, 0x04},
     "RP2350",
     "RP2350 Remote Display",
-    "",
+    NULL, /* Stable board ID, generated in tud_descriptor_string_cb(). */
     "Display transport",
 };
 
@@ -68,7 +70,15 @@ const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t langid)
             return NULL;
         }
 
+        char serial[PICO_UNIQUE_BOARD_ID_SIZE_BYTES * 2u + 1u];
         const char *ascii = string_descriptors[index];
+        if (index == 3u) {
+            pico_get_unique_board_id_string(serial, (uint)sizeof(serial));
+            ascii = serial;
+        }
+        if (ascii == NULL) {
+            return NULL;
+        }
         while (ascii[length] != '\0' && length < (TU_ARRAY_SIZE(descriptor) - 1u)) {
             descriptor[1u + length] = (uint8_t)ascii[length];
             ++length;

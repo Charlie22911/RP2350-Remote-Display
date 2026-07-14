@@ -46,8 +46,36 @@ static bool rle_is_valid(const uint8_t *encoded, uint16_t encoded_length, uint32
     return pixels == expected_pixels && offset == encoded_length;
 }
 
-static bool encoded_data_valid(uint16_t width, uint16_t height, uint8_t pixel_format,
-                               uint8_t codec, const uint8_t *encoded, uint16_t encoded_length)
+static bool palette_indices_valid(const uint8_t *indices, uint32_t pixels,
+                                  uint8_t bits_per_index, uint8_t palette_count)
+{
+    if (indices == NULL || (bits_per_index != 4u && bits_per_index != 6u)) {
+        return false;
+    }
+    for (uint32_t pixel = 0u; pixel < pixels; ++pixel) {
+        uint8_t palette_index;
+        if (bits_per_index == 4u) {
+            const uint8_t packed = indices[pixel / 2u];
+            palette_index = (pixel & 1u) == 0u ? (uint8_t)(packed >> 4u) : (uint8_t)(packed & 0x0Fu);
+        } else {
+            const uint32_t bit_offset = pixel * 6u;
+            const uint32_t byte_offset = bit_offset / 8u;
+            const uint8_t shift = (uint8_t)(bit_offset & 7u);
+            uint16_t packed = indices[byte_offset];
+            if (shift > 2u) {
+                packed |= (uint16_t)indices[byte_offset + 1u] << 8u;
+            }
+            palette_index = (uint8_t)((packed >> shift) & 0x3Fu);
+        }
+        if (palette_index >= palette_count) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool rpd_resource_cache_encoded_data_valid(uint16_t width, uint16_t height, uint8_t pixel_format,
+                                           uint8_t codec, const uint8_t *encoded, uint16_t encoded_length)
 {
     if (!dimensions_valid(width, height) || encoded == NULL || encoded_length == 0u ||
         encoded_length > RPD_MAX_ENCODED_TILE_BYTES) {
@@ -72,7 +100,21 @@ static bool encoded_data_valid(uint16_t width, uint16_t height, uint8_t pixel_fo
         const uint8_t palette_count = encoded[0];
         const uint32_t index_bytes = (pixels + 1u) / 2u;
         const uint32_t expected = 1u + (uint32_t)palette_count * 2u + index_bytes;
-        return palette_count > 0u && palette_count <= 16u && expected == encoded_length;
+        const uint32_t index_offset = 1u + (uint32_t)palette_count * 2u;
+        return palette_count > 0u && palette_count <= 16u && expected == encoded_length &&
+               palette_indices_valid(encoded + index_offset, pixels, 4u, palette_count);
+    }
+
+    if (pixel_format == RPD_PIXEL_INDEX6) {
+        if (codec != RPD_CODEC_PALETTE64 || encoded_length < 4u) {
+            return false;
+        }
+        const uint8_t palette_count = encoded[0];
+        const uint32_t index_bytes = (pixels * 6u + 7u) / 8u;
+        const uint32_t expected = 1u + (uint32_t)palette_count * 2u + index_bytes;
+        const uint32_t index_offset = 1u + (uint32_t)palette_count * 2u;
+        return palette_count > 0u && palette_count <= 64u && expected == encoded_length &&
+               palette_indices_valid(encoded + index_offset, pixels, 6u, palette_count);
     }
 
     if (pixel_format == RPD_PIXEL_ALPHA8) {
@@ -144,7 +186,7 @@ bool rpd_resource_cache_define(uint32_t resource_id,
                                uint16_t encoded_length)
 {
     if (resource_id == 0u || find_slot(resource_id) != NULL ||
-        !encoded_data_valid(width, height, pixel_format, codec, encoded, encoded_length)) {
+        !rpd_resource_cache_encoded_data_valid(width, height, pixel_format, codec, encoded, encoded_length)) {
         return false;
     }
 

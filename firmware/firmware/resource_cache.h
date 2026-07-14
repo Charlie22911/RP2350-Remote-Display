@@ -19,6 +19,12 @@ typedef struct {
 void rpd_resource_cache_init(void);
 void rpd_resource_cache_reset(void);
 bool rpd_resource_cache_contains(uint32_t resource_id);
+bool rpd_resource_cache_encoded_data_valid(uint16_t width,
+                                           uint16_t height,
+                                           uint8_t pixel_format,
+                                           uint8_t codec,
+                                           const uint8_t *encoded,
+                                           uint16_t encoded_length);
 bool rpd_resource_cache_define(uint32_t resource_id,
                                uint16_t width,
                                uint16_t height,

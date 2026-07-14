@@ -31,10 +31,12 @@ from .protocol import (
     CAP_PALETTE64_SCALE2,
     CAP_OPTIONAL_PACKET_CRC32,
     CAP_OPTIONAL_TILE_CRC32,
+    CAP_FRAME_TRANSACTIONS,
     CAP_PRIMITIVES,
     CAP_RGB565_TILES,
     CAP_RLE,
     CAP_SEGMENTED_TILES,
+    CAP_SESSION_REATTACH,
     CAP_TILE_PROFILES,
     CAP_TOUCH_EVENTS,
     CODEC_RAW,
@@ -44,6 +46,7 @@ from .protocol import (
     HELLO_REPLY_STRUCT,
     MAX_ENCODED_TILE_BYTES,
     MAX_PAYLOAD,
+    PACKET_FLAG_CRC32,
     PACKET_FLAG_TILE_CONTENT_CRC32,
     MSG_ACK,
     MSG_BLIT_TILE,
@@ -147,6 +150,21 @@ SCALE2_SOURCE_HEIGHT = SCREEN_HEIGHT // 2
 SCALE2_TILE_WIDTH = 15
 SCALE2_TILE_HEIGHT = 20
 SCALE2_MAX_ENCODED_BYTES = SCALE2_TILE_WIDTH * SCALE2_TILE_HEIGHT * 3
+PING_MAX_PAYLOAD = 64
+LINE_MAX_THICKNESS = 32
+LINE_MAX_WORK = 1_000_000
+PENDING_PACKET_LIMIT = 128
+EVENT_QUEUE_LIMIT = 256
+
+_REQUIRED_CAPABILITIES = (
+    CAP_RGB565_TILES
+    | CAP_ALPHA8_TILES
+    | CAP_RLE
+    | CAP_PRIMITIVES
+    | CAP_FRAME_TRANSACTIONS
+    | CAP_SESSION_REATTACH
+    | CAP_TILE_PROFILES
+)
 
 
 class RemoteDisplayError(RuntimeError):
@@ -161,19 +179,117 @@ class RemoteDisplayAccessError(RemoteDisplayError):
     """Raised when the operating system denies access to the USB interface."""
 
 
+class RemoteDisplayTransportError(RemoteDisplayError):
+    """Raised when a USB transfer fails for a reason other than access denial."""
+
+
 def _is_access_denied(error: BaseException) -> bool:
     return (
         getattr(error, "errno", None) in {errno.EACCES, errno.EPERM}
+        or getattr(error, "winerror", None) == 5
         or "access denied" in str(error).lower()
         or "insufficient permissions" in str(error).lower()
     )
 
 
+def _transport_exception(action: str, error: BaseException) -> RemoteDisplayError:
+    if _is_access_denied(error):
+        return RemoteDisplayAccessError(f"USB access was denied while {action}: {error}")
+    return RemoteDisplayTransportError(f"USB transport failed while {action}: {error}")
+
+
+def _is_transport_timeout(error: BaseException) -> bool:
+    return (
+        error.__class__.__name__ == "USBTimeoutError"
+        or getattr(error, "errno", None) in {errno.ETIMEDOUT, 10060}
+    )
+
+
+def _usb_device_serial(device, usb_util) -> str | None:
+    try:
+        serial = getattr(device, "serial_number", None)
+    except Exception as exc:
+        raise _transport_exception("reading a USB serial number", exc) from exc
+    if serial:
+        return str(serial)
+
+    serial_index = getattr(device, "iSerialNumber", 0)
+    if not serial_index:
+        return None
+    try:
+        value = usb_util.get_string(device, serial_index)
+    except Exception as exc:
+        raise _transport_exception("reading a USB serial number", exc) from exc
+    return str(value) if value else None
+
+
+def _select_usb_device(
+    devices: Sequence[object],
+    usb_util,
+    *,
+    serial_number: str | None,
+    bus: int | None,
+    address: int | None,
+):
+    if serial_number is not None and (not isinstance(serial_number, str) or not serial_number.strip()):
+        raise ValueError("serial_number must be a non-empty string")
+    for name, value in (("bus", bus), ("address", address)):
+        if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+            raise ValueError(f"{name} must be a non-negative integer")
+
+    matches = []
+    for device in devices:
+        if bus is not None and getattr(device, "bus", None) != bus:
+            continue
+        if address is not None and getattr(device, "address", None) != address:
+            continue
+        if serial_number is not None and _usb_device_serial(device, usb_util) != serial_number:
+            continue
+        matches.append(device)
+
+    selector_used = serial_number is not None or bus is not None or address is not None
+    if not matches:
+        detail = " matching the supplied selector" if selector_used else ""
+        raise RemoteDisplayError(f"no RP2350 remote display was found{detail}")
+    if len(matches) > 1:
+        raise RemoteDisplayError(
+            "multiple RP2350 remote displays matched; select one with serial_number, bus, and/or address"
+        )
+    return matches[0]
+
+
+def _cleanup_usb_device(
+    device,
+    usb_util,
+    *,
+    claimed_interface: int | None,
+    detached_interface: int | None,
+) -> None:
+    """Best-effort release for both failed opens and normal shutdown."""
+
+    if claimed_interface is not None:
+        try:
+            usb_util.release_interface(device, claimed_interface)
+        except Exception:
+            pass
+    if detached_interface is not None:
+        try:
+            device.attach_kernel_driver(detached_interface)
+        except Exception:
+            pass
+    try:
+        usb_util.dispose_resources(device)
+    except Exception:
+        pass
+
+
 class RemoteProtocolError(RemoteDisplayError):
-    def __init__(self, status: int, command: int) -> None:
-        super().__init__(f"device rejected command 0x{command:02x} with status {status}")
+    def __init__(self, status: int, command: int, sequence: int | None = None) -> None:
+        suffix = "" if sequence is None else f" (sequence {sequence})"
+        super().__init__(f"device rejected command 0x{command:02x} with status {status}{suffix}")
         self.status = status
         self.command = command
+        self.sequence = sequence
 
 
 @dataclass(frozen=True)
@@ -291,17 +407,23 @@ class RemoteDisplay:
         timeout_ms: int = 1000,
         strict_packet_crc: bool = False,
         strict_tile_crc: bool = False,
+        detached_kernel_interface: int | None = None,
     ) -> None:
         self._device = device
         self._endpoint_out = endpoint_out
         self._endpoint_in = endpoint_in
         self._interface_number = interface_number
+        self._detached_kernel_interface = detached_kernel_interface
         self.timeout_ms = timeout_ms
         self._strict_packet_crc = strict_packet_crc
         self._strict_tile_crc = strict_tile_crc
         self._parser = PacketParser()
         self._pending: deque[Packet] = deque()
-        self._events: deque[TouchEvent] = deque()
+        self._expired_sequences: deque[int] = deque(maxlen=64)
+        # Touch movement can arrive continuously even when an application does
+        # not poll. Keep recent state without allowing an idle client to grow
+        # memory indefinitely.
+        self._events: deque[TouchEvent] = deque(maxlen=EVENT_QUEUE_LIMIT)
         self._sequence = 1
         self._frame_id = 1
         self._tile_id = 1
@@ -318,6 +440,10 @@ class RemoteDisplay:
         timeout_ms: int = 1000,
         strict_packet_crc: bool = False,
         strict_tile_crc: bool = False,
+        *,
+        serial_number: str | None = None,
+        bus: int | None = None,
+        address: int | None = None,
     ) -> "RemoteDisplay":
         try:
             import usb.core
@@ -325,72 +451,109 @@ class RemoteDisplay:
         except ImportError as exc:
             raise RuntimeError("PyUSB is required. Install the host package dependencies.") from exc
 
-        device = usb.core.find(idVendor=vid, idProduct=pid)
-        if device is None:
-            raise RemoteDisplayError(f"device {vid:04x}:{pid:04x} was not found")
-
         try:
-            if device.is_kernel_driver_active(0):
-                device.detach_kernel_driver(0)
-        except (NotImplementedError, usb.core.USBError):
-            pass
-
-        try:
-            device.set_configuration()
+            devices = list(usb.core.find(find_all=True, idVendor=vid, idProduct=pid) or ())
         except usb.core.USBError as exc:
             if _is_access_denied(exc):
-                raise RemoteDisplayAccessError(
-                    "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
-                    "and reconnect the board"
-                ) from exc
-            raise RemoteDisplayError(f"could not configure the USB device: {exc}") from exc
-        configuration = device.get_active_configuration()
-        interface = None
-        for candidate in configuration:
-            if candidate.bInterfaceClass == 0xFF:
-                interface = candidate
-                break
-        if interface is None:
-            raise RemoteDisplayError("no vendor bulk interface was found")
+                raise RemoteDisplayAccessError(f"access to USB devices was denied: {exc}") from exc
+            raise RemoteDisplayTransportError(f"could not enumerate USB devices: {exc}") from exc
+        try:
+            device = _select_usb_device(
+                devices,
+                usb.util,
+                serial_number=serial_number,
+                bus=bus,
+                address=address,
+            )
+        except RemoteDisplayError as exc:
+            if not devices and serial_number is None and bus is None and address is None:
+                raise RemoteDisplayError(f"device {vid:04x}:{pid:04x} was not found") from exc
+            raise
 
-        endpoint_out = None
-        endpoint_in = None
-        for endpoint in interface:
-            direction = usb.util.endpoint_direction(endpoint.bEndpointAddress)
-            if direction == usb.util.ENDPOINT_OUT:
-                endpoint_out = endpoint
-            elif direction == usb.util.ENDPOINT_IN:
-                endpoint_in = endpoint
+        detached_interface: int | None = None
+        claimed_interface: int | None = None
+        try:
+            try:
+                if device.is_kernel_driver_active(0):
+                    device.detach_kernel_driver(0)
+                    detached_interface = 0
+            except (NotImplementedError, usb.core.USBError):
+                pass
 
-        if endpoint_out is None or endpoint_in is None:
-            raise RemoteDisplayError("vendor interface does not expose both bulk endpoints")
+            try:
+                device.set_configuration()
+            except usb.core.USBError as exc:
+                if _is_access_denied(exc):
+                    raise RemoteDisplayAccessError(
+                        "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
+                        "and reconnect the board"
+                    ) from exc
+                raise RemoteDisplayTransportError(f"could not configure the USB device: {exc}") from exc
+            try:
+                configuration = device.get_active_configuration()
+            except usb.core.USBError as exc:
+                raise _transport_exception("reading the active USB configuration", exc) from exc
+            interface = None
+            for candidate in configuration:
+                if candidate.bInterfaceClass == 0xFF:
+                    interface = candidate
+                    break
+            if interface is None:
+                raise RemoteDisplayError("no vendor bulk interface was found")
+
+            endpoint_out = None
+            endpoint_in = None
+            for endpoint in interface:
+                direction = usb.util.endpoint_direction(endpoint.bEndpointAddress)
+                if direction == usb.util.ENDPOINT_OUT:
+                    endpoint_out = endpoint
+                elif direction == usb.util.ENDPOINT_IN:
+                    endpoint_in = endpoint
+
+            if endpoint_out is None or endpoint_in is None:
+                raise RemoteDisplayError("vendor interface does not expose both bulk endpoints")
+
+            try:
+                usb.util.claim_interface(device, interface.bInterfaceNumber)
+                claimed_interface = interface.bInterfaceNumber
+            except usb.core.USBError as exc:
+                if _is_access_denied(exc):
+                    raise RemoteDisplayAccessError(
+                        "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
+                        "and reconnect the board"
+                    ) from exc
+                raise RemoteDisplayTransportError(f"could not claim the vendor interface: {exc}") from exc
+        except BaseException:
+            _cleanup_usb_device(
+                device,
+                usb.util,
+                claimed_interface=claimed_interface,
+                detached_interface=detached_interface,
+            )
+            raise
 
         try:
-            usb.util.claim_interface(device, interface.bInterfaceNumber)
-        except usb.core.USBError as exc:
-            if _is_access_denied(exc):
-                raise RemoteDisplayAccessError(
-                    "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
-                    "and reconnect the board"
-                ) from exc
-            raise RemoteDisplayError(f"could not claim the vendor interface: {exc}") from exc
-
-        display = cls(
-            device,
-            endpoint_out,
-            endpoint_in,
-            interface.bInterfaceNumber,
-            timeout_ms,
-            strict_packet_crc,
-            strict_tile_crc,
-        )
+            display = cls(
+                device,
+                endpoint_out,
+                endpoint_in,
+                interface.bInterfaceNumber,
+                timeout_ms,
+                strict_packet_crc,
+                strict_tile_crc,
+                detached_interface,
+            )
+        except BaseException:
+            _cleanup_usb_device(
+                device,
+                usb.util,
+                claimed_interface=claimed_interface,
+                detached_interface=detached_interface,
+            )
+            raise
         try:
             display._drain_input(120)
             display.hello(retries=3)
-            if strict_packet_crc and not display.info.capabilities & CAP_OPTIONAL_PACKET_CRC32:
-                raise RemoteDisplayError("connected firmware does not advertise optional packet CRC")
-            if strict_tile_crc and not display.info.capabilities & CAP_OPTIONAL_TILE_CRC32:
-                raise RemoteDisplayError("connected firmware does not advertise optional staged-tile CRC")
         except BaseException:
             display.close()
             raise
@@ -403,23 +566,24 @@ class RemoteDisplay:
             if self._active_frame_id is not None:
                 try:
                     self.frame_abort()
-                except RemoteDisplayError:
+                except Exception:
                     pass
             try:
                 self.session_close()
-            except RemoteDisplayError:
+            except Exception:
                 pass
         finally:
             try:
-                import usb.core
                 import usb.util
-                try:
-                    usb.util.release_interface(self._device, self._interface_number)
-                except usb.core.USBError:
-                    pass
-                usb.util.dispose_resources(self._device)
             except ImportError:
                 pass
+            else:
+                _cleanup_usb_device(
+                    self._device,
+                    usb.util,
+                    claimed_interface=self._interface_number,
+                    detached_interface=self._detached_kernel_interface,
+                )
             self._closed = True
 
     def __enter__(self) -> "RemoteDisplay":
@@ -430,17 +594,38 @@ class RemoteDisplay:
 
     def _drain_input(self, duration_ms: int) -> None:
         """Discard replies/events left by a prior host process before HELLO."""
+        self._events.clear()
         deadline = time.monotonic() + max(0, duration_ms) / 1000.0
         while time.monotonic() < deadline:
             packets = self._read_once(min(20, max(1, int((deadline - time.monotonic()) * 1000))))
             if not packets:
                 continue
-            for packet in packets:
-                event = self._decode_event(packet)
-                if event is not None:
-                    self._events.append(event)
+        self._reset_receive_state()
+        self._events.clear()
+
+    def _reset_receive_state(self) -> None:
         self._parser = PacketParser()
-        self._pending.clear()
+        self._pending = deque()
+
+    def _invalidate_session(self) -> None:
+        self.info = None
+        self._active_frame_id = None
+        self._reset_receive_state()
+        self._events.clear()
+
+    def recover_session(self, *, retries: int = 3, drain_ms: int = 120) -> DisplayInfo:
+        """Reset uncertain host state and negotiate a fresh firmware session.
+
+        A new HELLO resets frame, staged-transfer, and resource-cache state on
+        the device. Cached resource identifiers must therefore be uploaded again.
+        """
+        if self._closed:
+            raise RemoteDisplayError("cannot recover a closed display")
+        if drain_ms < 0:
+            raise ValueError("drain_ms must not be negative")
+        self._invalidate_session()
+        self._drain_input(drain_ms)
+        return self.hello(retries=retries)
 
     def _next_sequence(self) -> int:
         sequence = self._sequence
@@ -453,6 +638,8 @@ class RemoteDisplay:
         return tile_id
 
     def _write(self, message_type: int, payload: bytes = b"", flags: int = 0) -> int:
+        if self._closed:
+            raise RemoteDisplayError("cannot write to a closed display")
         sequence = self._next_sequence()
         packet = pack_packet(
             message_type,
@@ -461,19 +648,32 @@ class RemoteDisplay:
             flags=flags,
             packet_crc=getattr(self, "_strict_packet_crc", False),
         )
-        written = self._endpoint_out.write(packet, timeout=self.timeout_ms)
+        try:
+            written = self._endpoint_out.write(packet, timeout=self.timeout_ms)
+        except Exception as exc:
+            self._invalidate_session()
+            raise _transport_exception("writing to the display", exc) from exc
         if written != len(packet):
-            raise RemoteDisplayError(f"short USB write: {written} of {len(packet)} bytes")
+            self._invalidate_session()
+            raise RemoteDisplayTransportError(f"short USB write: {written} of {len(packet)} bytes")
         return sequence
 
     def _read_once(self, timeout_ms: int) -> list[Packet]:
+        if self._closed:
+            raise RemoteDisplayError("cannot read from a closed display")
         try:
             data = bytes(self._endpoint_in.read(64, timeout=timeout_ms))
         except Exception as exc:
-            if exc.__class__.__name__ == "USBTimeoutError":
+            if _is_transport_timeout(exc):
                 return []
-            raise
-        return self._parser.feed(data)
+            self._invalidate_session()
+            raise _transport_exception("reading from the display", exc) from exc
+        bad_packets = self._parser.bad_packets
+        packets = self._parser.feed(data)
+        if self.info is not None and self._strict_packet_crc and self._parser.bad_packets != bad_packets:
+            self._invalidate_session()
+            raise RemoteDisplayError("incoming USB packet failed framing or CRC validation")
+        return packets
 
     def _decode_event(self, packet: Packet) -> TouchEvent | None:
         if packet.message_type != MSG_TOUCH or len(packet.payload) != 6:
@@ -482,46 +682,123 @@ class RemoteDisplay:
         return TouchEvent(x=x, y=y, pressed=bool(state), contacts=contacts)
 
     def _handle_incoming(self, packet: Packet) -> Packet | None:
+        if self._strict_packet_crc and not packet.flags & PACKET_FLAG_CRC32:
+            self._invalidate_session()
+            raise RemoteDisplayError("strict packet CRC is enabled but the device sent an unprotected packet")
         event = self._decode_event(packet)
         if event is not None:
             self._events.append(event)
             return None
+        return packet
+
+    def _raise_protocol_error(self, packet: Packet) -> None:
+        self._invalidate_session()
+        if len(packet.payload) != 2:
+            raise RemoteDisplayError("device sent a malformed error response")
+        status, command = packet.payload
+        raise RemoteProtocolError(status, command, packet.sequence)
+
+    def _queue_pending(self, packet: Packet) -> None:
+        if packet.sequence in self._expired_sequences:
+            return
+        if len(self._pending) >= PENDING_PACKET_LIMIT:
+            self._invalidate_session()
+            raise RemoteDisplayError("too many unmatched USB replies; recover the display session")
+        self._pending.append(packet)
+
+    def _process_wait_packet(self, packet: Packet, sequence: int, expected_type: int) -> Packet | None:
+        packet = self._handle_incoming(packet)
+        if packet is None:
+            return None
+        if packet.sequence != sequence:
+            # Drawing and staged-transfer commands are intentionally fire-and-forget.
+            # Their sequence-tagged errors must still fail the next synchronization
+            # point, while replies for an explicitly expired request are discarded.
+            if packet.message_type == MSG_ERROR and packet.sequence not in self._expired_sequences:
+                self._raise_protocol_error(packet)
+            self._queue_pending(packet)
+            return None
         if packet.message_type == MSG_ERROR:
-            if len(packet.payload) != 2:
-                raise RemoteDisplayError("device sent a malformed error response")
-            status, command = packet.payload
-            self._active_frame_id = None
-            raise RemoteProtocolError(status, command)
+            self._raise_protocol_error(packet)
+        if packet.message_type != expected_type:
+            self._invalidate_session()
+            raise RemoteDisplayError(
+                f"device returned message 0x{packet.message_type:02x} while 0x{expected_type:02x} was expected "
+                f"for sequence {sequence}"
+            )
         return packet
 
     def _wait_for(self, sequence: int, expected_type: int, timeout_ms: int | None = None) -> Packet:
-        deadline = time.monotonic() + (self.timeout_ms if timeout_ms is None else timeout_ms) / 1000.0
+        timeout = self.timeout_ms if timeout_ms is None else timeout_ms
+        if timeout < 0:
+            raise ValueError("timeout_ms must not be negative")
+        deadline = time.monotonic() + timeout / 1000.0
 
         while time.monotonic() < deadline:
             pending_count = len(self._pending)
             for _ in range(pending_count):
                 packet = self._pending.popleft()
-                packet = self._handle_incoming(packet)
-                if packet is None:
-                    continue
-                if packet.sequence == sequence and packet.message_type == expected_type:
-                    return packet
-                self._pending.append(packet)
+                reply = self._process_wait_packet(packet, sequence, expected_type)
+                if reply is not None:
+                    return reply
 
             remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
-            for packet in self._read_once(min(remaining_ms, 50)):
-                packet = self._handle_incoming(packet)
-                if packet is None:
-                    continue
-                if packet.sequence == sequence and packet.message_type == expected_type:
-                    return packet
-                self._pending.append(packet)
+            packets = self._read_once(min(remaining_ms, 50))
+            for index, packet in enumerate(packets):
+                reply = self._process_wait_packet(packet, sequence, expected_type)
+                if reply is not None:
+                    # One USB read can contain several small protocol packets. Do
+                    # not lose trailing touch events or replies when the awaited
+                    # response happens to appear first in that batch.
+                    for trailing in packets[index + 1:]:
+                        trailing = self._handle_incoming(trailing)
+                        if trailing is not None:
+                            self._queue_pending(trailing)
+                    return reply
 
+        # Keep this sequence quarantined until a new HELLO succeeds. A delayed
+        # reply from the timed-out request can otherwise be mistaken for an
+        # asynchronous failure while session recovery is in progress.
+        self._expired_sequences.append(sequence)
+        self._invalidate_session()
         raise RemoteDisplayTimeout(f"timed out waiting for response to sequence {sequence}")
+
+    def _validate_hello_info(self, info: DisplayInfo) -> None:
+        if info.protocol_version != PROTOCOL_VERSION:
+            raise RemoteDisplayError(f"protocol mismatch: device reports {info.protocol_version}")
+        if (info.width, info.height) != (SCREEN_WIDTH, SCREEN_HEIGHT):
+            raise RemoteDisplayError(
+                f"display geometry mismatch: device reports {info.width}x{info.height}, "
+                f"expected {SCREEN_WIDTH}x{SCREEN_HEIGHT}"
+            )
+        for name in ("small", "medium", "large"):
+            expected = get_tile_profile(name)
+            advertised = info.tile_profile(name)
+            if (advertised.width, advertised.height) != (expected.width, expected.height):
+                raise RemoteDisplayError(
+                    f"{name} tile profile mismatch: device reports {advertised.width}x{advertised.height}, "
+                    f"expected {expected.width}x{expected.height}"
+                )
+        if info.max_payload < MAX_PAYLOAD:
+            raise RemoteDisplayError(
+                f"device payload limit {info.max_payload} is smaller than the required {MAX_PAYLOAD} bytes"
+            )
+        missing = _REQUIRED_CAPABILITIES & ~info.capabilities
+        if missing:
+            raise RemoteDisplayError(f"firmware is missing required capability bits 0x{missing:08x}")
+        if self._strict_packet_crc and not info.capabilities & CAP_OPTIONAL_PACKET_CRC32:
+            raise RemoteDisplayError("connected firmware does not advertise optional packet CRC")
+        if self._strict_tile_crc and not info.capabilities & CAP_OPTIONAL_TILE_CRC32:
+            raise RemoteDisplayError("connected firmware does not advertise optional staged-tile CRC")
 
     def hello(self, retries: int = 1) -> DisplayInfo:
         if retries < 1:
             raise ValueError("retries must be at least one")
+        if self._closed:
+            raise RemoteDisplayError("cannot negotiate a session on a closed display")
+        self.info = None
+        self._active_frame_id = None
+        self._pending.clear()
         last_error: RemoteDisplayError | None = None
         for attempt in range(retries):
             sequence = self._write(MSG_HELLO, struct.pack("<H", PROTOCOL_VERSION))
@@ -529,21 +806,28 @@ class RemoteDisplay:
                 reply = self._wait_for(sequence, MSG_HELLO_REPLY)
             except RemoteDisplayTimeout as exc:
                 last_error = exc
-                self._parser = PacketParser()
-                self._pending.clear()
+                self._reset_receive_state()
                 if attempt + 1 < retries:
                     time.sleep(0.08)
                 continue
             if len(reply.payload) != HELLO_REPLY_STRUCT.size:
+                self._invalidate_session()
                 raise RemoteDisplayError("invalid HELLO reply")
             info = DisplayInfo(*HELLO_REPLY_STRUCT.unpack(reply.payload))
-            if info.protocol_version != PROTOCOL_VERSION:
-                raise RemoteDisplayError(f"protocol mismatch: device reports {info.protocol_version}")
+            try:
+                self._validate_hello_info(info)
+            except RemoteDisplayError:
+                self._invalidate_session()
+                raise
             self.info = info
+            self._pending.clear()
+            self._expired_sequences.clear()
             return info
         raise last_error or RemoteDisplayTimeout("device did not reply to HELLO")
 
     def ping(self, payload: bytes = b"ping") -> bytes:
+        if len(payload) > PING_MAX_PAYLOAD:
+            raise ValueError(f"PING payload must not exceed {PING_MAX_PAYLOAD} bytes")
         sequence = self._write(MSG_PING, payload)
         reply = self._wait_for(sequence, MSG_PONG)
         return reply.payload
@@ -644,15 +928,23 @@ class RemoteDisplay:
         *,
         port: int = 123,
         timeout: float = 2.0,
+        max_offset_seconds: float | None = 86_400.0,
     ) -> RtcNtpSyncResult:
         """Query unauthenticated NTP, set the board RTC in UTC, and read it back.
 
         The NTP exchange runs on the host. The Pico receives only the resulting
         whole-second UTC calendar value. This method does not change the host
-        operating system clock.
+        operating system clock. By default, samples more than one day from the
+        host clock are rejected; tune ``max_offset_seconds`` or deliberately
+        pass ``None`` to disable that plausibility check.
         """
         self._require_rtc_access()
-        sample: NtpSample = query_ntp(server, port=port, timeout=timeout)
+        sample: NtpSample = query_ntp(
+            server,
+            port=port,
+            timeout=timeout,
+            max_offset_seconds=max_offset_seconds,
+        )
         target = nearest_second(current_utc_from_sample(sample))
         rtc = self.set_rtc(target, verify=True)
         assert rtc is not None
@@ -787,17 +1079,20 @@ class RemoteDisplay:
         if self._strict_tile_crc:
             payload += TILE_BEGIN_CRC_STRUCT.pack(data_crc32(encoded))
             flags |= PACKET_FLAG_TILE_CONTENT_CRC32
-        self._write(MSG_RESOURCE_BEGIN, payload, flags=flags)
-
         chunk_capacity = MAX_PAYLOAD - RESOURCE_CHUNK_PREFIX_STRUCT.size
-        for offset in range(0, len(encoded), chunk_capacity):
-            chunk = encoded[offset:offset + chunk_capacity]
-            self._write(MSG_RESOURCE_CHUNK, RESOURCE_CHUNK_PREFIX_STRUCT.pack(resource_id, offset) + chunk)
+        try:
+            self._write(MSG_RESOURCE_BEGIN, payload, flags=flags)
+            for offset in range(0, len(encoded), chunk_capacity):
+                chunk = encoded[offset:offset + chunk_capacity]
+                self._write(MSG_RESOURCE_CHUNK, RESOURCE_CHUNK_PREFIX_STRUCT.pack(resource_id, offset) + chunk)
 
-        sequence = self._write(MSG_RESOURCE_END, RESOURCE_END_STRUCT.pack(resource_id))
-        reply = self._wait_for(sequence, MSG_ACK)
-        if reply.payload != bytes((STATUS_OK,)):
-            raise RemoteDisplayError("device rejected cached resource")
+            sequence = self._write(MSG_RESOURCE_END, RESOURCE_END_STRUCT.pack(resource_id))
+            reply = self._wait_for(sequence, MSG_ACK)
+            if reply.payload != bytes((STATUS_OK,)):
+                raise RemoteDisplayError("device rejected cached resource")
+        except BaseException:
+            self._invalidate_session()
+            raise
 
         chunk_count = (len(encoded) + chunk_capacity - 1) // chunk_capacity
         packet_count = chunk_count + 2
@@ -842,6 +1137,8 @@ class RemoteDisplay:
         indices: bytes | bytearray | memoryview,
     ) -> ResourceUploadStats:
         self._validate_tile(0, 0, width, height)
+        if self.info is not None and not self.info.capabilities & CAP_PALETTE4_TILES:
+            raise RemoteDisplayError("connected firmware does not advertise Palette4 resources")
         palette_values = tuple(self._check_color(value) for value in palette)
         if not 1 <= len(palette_values) <= 16:
             raise ValueError("palette must contain 1..16 RGB565 colors")
@@ -860,6 +1157,51 @@ class RemoteDisplay:
             encoded.extend(struct.pack("<H", color))
         encoded.extend(packed)
         return self._cache_encoded_resource(resource_id, width, height, PIXEL_INDEX4, CODEC_PALETTE4, bytes(encoded))
+
+    def cache_palette64(
+        self,
+        resource_id: int,
+        width: int,
+        height: int,
+        palette: Sequence[int],
+        indices: bytes | bytearray | memoryview,
+    ) -> ResourceUploadStats:
+        """Cache a 1-64 color resource using packed LSB-first six-bit indices."""
+
+        self._validate_tile(0, 0, width, height)
+        if self.info is not None and not self.info.capabilities & CAP_PALETTE64_TILES:
+            raise RemoteDisplayError("connected firmware does not advertise Palette64 resources")
+        palette_values = tuple(self._check_color(value) for value in palette)
+        if not 1 <= len(palette_values) <= 64:
+            raise ValueError("palette must contain 1..64 RGB565 colors")
+        raw_indices = bytes(indices)
+        pixel_count = width * height
+        if len(raw_indices) != pixel_count:
+            raise ValueError("palette index count does not match resource dimensions")
+        if any(index >= len(palette_values) for index in raw_indices):
+            raise ValueError("palette index is outside the supplied palette")
+
+        packed = bytearray((pixel_count * 6 + 7) // 8)
+        for pixel, value in enumerate(raw_indices):
+            bit_offset = pixel * 6
+            byte_offset = bit_offset // 8
+            shift = bit_offset & 7
+            packed[byte_offset] |= (value << shift) & 0xFF
+            if shift > 2:
+                packed[byte_offset + 1] |= value >> (8 - shift)
+
+        encoded = bytearray((len(palette_values),))
+        for color in palette_values:
+            encoded.extend(struct.pack("<H", color))
+        encoded.extend(packed)
+        return self._cache_encoded_resource(
+            resource_id,
+            width,
+            height,
+            PIXEL_INDEX6,
+            CODEC_PALETTE64,
+            bytes(encoded),
+        )
 
     def draw_cached(self, resource_id: int, x: int, y: int, color: int = 0) -> None:
         self._ensure_frame()
@@ -886,18 +1228,26 @@ class RemoteDisplay:
             raise RemoteDisplayError("device rejected resource-cache clear")
 
     def _ensure_frame(self) -> None:
+        if self.info is None:
+            raise RemoteDisplayError("no active session; call recover_session() before opening or drawing a frame")
         if self._active_frame_id is None:
             raise RemoteDisplayError("drawing commands must be sent inside 'with display.frame(): ...'")
 
     def frame_begin(self, frame_id: int | None = None) -> int:
+        if self.info is None:
+            raise RemoteDisplayError("HELLO must complete before opening a frame")
         if self._active_frame_id is not None:
             raise RemoteDisplayError("a frame is already open")
         if frame_id is None:
             frame_id = self._frame_id
         sequence = self._write(MSG_FRAME_BEGIN, struct.pack("<I", frame_id))
-        reply = self._wait_for(sequence, MSG_ACK)
-        if reply.payload != bytes((STATUS_OK,)):
-            raise RemoteDisplayError("device rejected FRAME_BEGIN")
+        try:
+            reply = self._wait_for(sequence, MSG_ACK)
+            if reply.payload != bytes((STATUS_OK,)):
+                raise RemoteDisplayError("device rejected FRAME_BEGIN")
+        except BaseException:
+            self._invalidate_session()
+            raise
         self._active_frame_id = frame_id
         return frame_id
 
@@ -912,6 +1262,9 @@ class RemoteDisplay:
             reply = self._wait_for(sequence, MSG_ACK, timeout_ms)
             if reply.payload != bytes((STATUS_OK,)):
                 raise RemoteDisplayError("device returned an invalid frame acknowledgement")
+        except BaseException:
+            self._invalidate_session()
+            raise
         finally:
             self._active_frame_id = None
         self._frame_id = 1 if frame_id == 0xFFFFFFFF else frame_id + 1
@@ -927,17 +1280,19 @@ class RemoteDisplay:
             if reply.payload != bytes((STATUS_OK,)):
                 raise RemoteDisplayError("device rejected FRAME_ABORT")
         finally:
-            self._active_frame_id = None
+            self._invalidate_session()
 
     def session_close(self) -> None:
         """End the current host session without altering the displayed canvas."""
         if self.info is None or self._closed:
             return
-        sequence = self._write(MSG_SESSION_CLOSE)
-        reply = self._wait_for(sequence, MSG_ACK)
-        if reply.payload != bytes((STATUS_OK,)):
-            raise RemoteDisplayError("device rejected SESSION_CLOSE")
-        self.info = None
+        try:
+            sequence = self._write(MSG_SESSION_CLOSE)
+            reply = self._wait_for(sequence, MSG_ACK)
+            if reply.payload != bytes((STATUS_OK,)):
+                raise RemoteDisplayError("device rejected SESSION_CLOSE")
+        finally:
+            self._invalidate_session()
 
     @contextmanager
     def frame(self, timeout_ms: int | None = None) -> Iterator["RemoteDisplay"]:
@@ -984,10 +1339,90 @@ class RemoteDisplay:
             raise ValueError("thickness must be in the range 0..255")
         self._write(MSG_STROKE_RECT, struct.pack("<HHHHHBB", x, y, width, height, self._check_color(color), thickness, 0))
 
+    @staticmethod
+    def _check_line_coordinate(value: int, name: str) -> int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"{name} must be an integer")
+        if not 0 <= value <= 0xFFFF:
+            raise ValueError(f"{name} must be in the range 0..65535")
+        return value
+
+    @staticmethod
+    def _check_line_thickness(thickness: int) -> int:
+        if not isinstance(thickness, int) or isinstance(thickness, bool):
+            raise TypeError("thickness must be an integer")
+        normalized = 1 if thickness == 0 else thickness
+        if thickness < 0 or normalized > LINE_MAX_THICKNESS:
+            raise ValueError(f"thickness must be in the range 0..{LINE_MAX_THICKNESS}")
+        return normalized
+
+    @staticmethod
+    def _trunc_div(numerator: int, denominator: int) -> int:
+        """Integer division truncated toward zero, matching C99 signed division."""
+
+        quotient = abs(numerator) // abs(denominator)
+        return -quotient if (numerator < 0) != (denominator < 0) else quotient
+
+    @staticmethod
+    def _line_outcode(x: int, y: int, min_x: int, min_y: int, max_x: int, max_y: int) -> int:
+        code = 0
+        if x < min_x:
+            code |= 1
+        elif x > max_x:
+            code |= 2
+        if y < min_y:
+            code |= 4
+        elif y > max_y:
+            code |= 8
+        return code
+
+    @classmethod
+    def _line_work(cls, x0: int, y0: int, x1: int, y1: int, thickness: int) -> int:
+        x0 = cls._check_line_coordinate(x0, "x0")
+        y0 = cls._check_line_coordinate(y0, "y0")
+        x1 = cls._check_line_coordinate(x1, "x1")
+        y1 = cls._check_line_coordinate(y1, "y1")
+        normalized = cls._check_line_thickness(thickness)
+        radius = normalized // 2
+        min_x = -radius
+        min_y = -radius
+        max_x = SCREEN_WIDTH - 1 + radius
+        max_y = SCREEN_HEIGHT - 1 + radius
+
+        while True:
+            code0 = cls._line_outcode(x0, y0, min_x, min_y, max_x, max_y)
+            code1 = cls._line_outcode(x1, y1, min_x, min_y, max_x, max_y)
+            if not code0 | code1:
+                break
+            if code0 & code1:
+                return 0
+
+            outside = code0 if code0 else code1
+            if outside & 4:
+                y = min_y
+                x = x0 + cls._trunc_div((x1 - x0) * (min_y - y0), y1 - y0)
+            elif outside & 8:
+                y = max_y
+                x = x0 + cls._trunc_div((x1 - x0) * (max_y - y0), y1 - y0)
+            elif outside & 2:
+                x = max_x
+                y = y0 + cls._trunc_div((y1 - y0) * (max_x - x0), x1 - x0)
+            else:
+                x = min_x
+                y = y0 + cls._trunc_div((y1 - y0) * (min_x - x0), x1 - x0)
+
+            if outside == code0:
+                x0, y0 = x, y
+            else:
+                x1, y1 = x, y
+
+        diameter = radius * 2 + 1
+        return (max(abs(x1 - x0), abs(y1 - y0)) + 1) * diameter * diameter
+
     def line(self, x0: int, y0: int, x1: int, y1: int, color: int, thickness: int = 1) -> None:
         self._ensure_frame()
-        if not 0 <= thickness <= 255:
-            raise ValueError("thickness must be in the range 0..255")
+        if self._line_work(x0, y0, x1, y1, thickness) > LINE_MAX_WORK:
+            raise ValueError(f"line exceeds the firmware work limit of {LINE_MAX_WORK}")
         self._write(MSG_LINE, struct.pack("<HHHHHBB", x0, y0, x1, y1, self._check_color(color), thickness, 0))
 
     @staticmethod
@@ -1055,12 +1490,30 @@ class RemoteDisplay:
 
     def polyline(self, points: Sequence[tuple[int, int]], color: int, thickness: int = 1) -> None:
         self._ensure_frame()
-        if not 2 <= len(points) <= 255:
+        point_values = []
+        for point in points:
+            point_values.append(point)
+            if len(point_values) > 255:
+                raise ValueError("polyline requires 2 to 255 points")
+        if len(point_values) < 2:
             raise ValueError("polyline requires 2 to 255 points")
-        if not 0 <= thickness <= 255:
-            raise ValueError("thickness must be in the range 0..255")
-        payload = bytearray(struct.pack("<HBB", self._check_color(color), thickness, len(points)))
-        for x, y in points:
+        self._check_line_thickness(thickness)
+        coordinates: list[tuple[int, int]] = []
+        for index, point in enumerate(point_values):
+            if not isinstance(point, Sequence) or len(point) != 2:
+                raise TypeError(f"polyline point {index} must contain exactly two coordinates")
+            x = self._check_line_coordinate(point[0], f"points[{index}].x")
+            y = self._check_line_coordinate(point[1], f"points[{index}].y")
+            coordinates.append((x, y))
+
+        total_work = 0
+        for (x0, y0), (x1, y1) in zip(coordinates, coordinates[1:]):
+            total_work += self._line_work(x0, y0, x1, y1, thickness)
+            if total_work > LINE_MAX_WORK:
+                raise ValueError(f"polyline exceeds the firmware work limit of {LINE_MAX_WORK}")
+
+        payload = bytearray(struct.pack("<HBB", self._check_color(color), thickness, len(coordinates)))
+        for x, y in coordinates:
             payload.extend(struct.pack("<HH", x, y))
         self._write(MSG_POLYLINE, bytes(payload))
 
@@ -1164,18 +1617,22 @@ class RemoteDisplay:
             len(encoded),
         )
         verify_tile_crc = getattr(self, "_strict_tile_crc", False)
-        if verify_tile_crc:
-            begin += TILE_BEGIN_CRC_STRUCT.pack(data_crc32(encoded))
-            self._write(MSG_TILE_BEGIN, begin, flags=PACKET_FLAG_TILE_CONTENT_CRC32)
-        else:
-            self._write(MSG_TILE_BEGIN, begin)
-
         chunk_capacity = MAX_PAYLOAD - TILE_CHUNK_PREFIX_STRUCT.size
-        for offset in range(0, len(encoded), chunk_capacity):
-            chunk = encoded[offset:offset + chunk_capacity]
-            self._write(MSG_TILE_CHUNK, TILE_CHUNK_PREFIX_STRUCT.pack(tile_id, offset) + chunk)
+        try:
+            if verify_tile_crc:
+                begin += TILE_BEGIN_CRC_STRUCT.pack(data_crc32(encoded))
+                self._write(MSG_TILE_BEGIN, begin, flags=PACKET_FLAG_TILE_CONTENT_CRC32)
+            else:
+                self._write(MSG_TILE_BEGIN, begin)
 
-        self._write(MSG_TILE_END, TILE_END_STRUCT.pack(tile_id))
+            for offset in range(0, len(encoded), chunk_capacity):
+                chunk = encoded[offset:offset + chunk_capacity]
+                self._write(MSG_TILE_CHUNK, TILE_CHUNK_PREFIX_STRUCT.pack(tile_id, offset) + chunk)
+
+            self._write(MSG_TILE_END, TILE_END_STRUCT.pack(tile_id))
+        except BaseException:
+            self._invalidate_session()
+            raise
         chunk_count = (len(encoded) + chunk_capacity - 1) // chunk_capacity
         self._record_tile_transfer(
             segmented=True,
@@ -1793,7 +2250,7 @@ class RemoteDisplay:
             for packet in self._read_once(1 if timeout_ms == 0 else max(1, min(20, int((deadline - time.monotonic()) * 1000)))):
                 packet = self._handle_incoming(packet)
                 if packet is not None:
-                    self._pending.append(packet)
+                    self._queue_pending(packet)
             if timeout_ms == 0 or time.monotonic() >= deadline:
                 break
 

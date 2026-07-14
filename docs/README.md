@@ -2,7 +2,7 @@
 
 ## What this project does
 
-RP2350 Remote Display turns the Waveshare RP2350 Touch AMOLED 2.41 board into a USB-attached display endpoint for a Linux application. The host sends drawing commands and image data. The firmware manages the panel, a 450×600 RGB565 framebuffer, touch events, and the PCF85063 RTC.
+RP2350 Remote Display turns the Waveshare RP2350 Touch AMOLED 2.41 board into a USB-attached display endpoint for a host application. The host sends drawing commands and image data. The firmware manages the panel, a 450×600 RGB565 framebuffer, touch events, and the PCF85063 RTC.
 
 The board has no application-specific shell or window system. Your host application owns the full display area.
 
@@ -16,14 +16,25 @@ Supported hardware:
 
 Supported host environment:
 
-- Linux.
-- Python 3.10 or newer for the host library and examples.
+- Linux for direct USB operation.
+- Windows 11 for native BOOTSEL flashing; experimental WSL 2 USB forwarding for the Linux host application.
+- Python 3.10 through 3.14 for the host library and examples.
 - CMake, an Arm embedded toolchain, and the Raspberry Pi Pico SDK when building firmware.
 - A libusb backend for PyUSB.
 
 The supplied bootstrap supports Debian, Ubuntu, Arch Linux, and CachyOS. Other distributions can use the package list printed by `./scripts/bootstrap-linux.sh --help` and the manual firmware instructions in [firmware/README.md](../firmware/README.md).
 
+Native Windows WinUSB operation is not yet supported. See the [Windows 11 guide](windows-11.md) for the supported flashing path, WSL 2 setup, and current limitations.
+
 ## First-time setup
+
+### Use a prebuilt release
+
+Download the UF2 and checksum file from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases). Verify the SHA-256 value, put the board in BOOTSEL mode, and copy the UF2 to the mounted boot volume. This flashing path works directly on Windows 11 and Linux and does not require the Pico SDK.
+
+Use matching firmware and Python artifacts from the same release. Continue with the host setup below when the board shows `WAITING FOR HOST`.
+
+### Build and set up on Linux
 
 From the repository root:
 
@@ -68,6 +79,19 @@ lsusb -d cafe:4010
 ```
 
 The default USB ID is for development. Change it, along with the udev rule, before distributing hardware.
+
+### Performance clock profile
+
+Release firmware defaults to the project's intentional performance profile: a 250 MHz RP2350 system clock and a 133 MHz maximum requested PSRAM serial clock. The divider produces an actual PSRAM clock of about 125 MHz at that system clock. If a board is unstable, rebuild with the conservative profile without editing source files:
+
+```bash
+./firmware/scripts/build.sh --clean \
+  --clock-khz 150000 \
+  --psram-max-sck-hz 109000000 \
+  --sdk /path/to/pico-sdk
+```
+
+Supported system-clock values are 120–250 MHz. Keep both selected clock values in test reports and release provenance.
 
 ## Write a first application
 

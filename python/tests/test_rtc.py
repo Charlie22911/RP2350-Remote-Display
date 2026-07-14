@@ -133,7 +133,7 @@ class RtcCommandTests(unittest.TestCase):
         calls: list[datetime] = []
         display.set_rtc = lambda value, verify=True: calls.append(value) or result_reading
 
-        with patch("rp2350_remote_display.display.query_ntp", return_value=sample), patch(
+        with patch("rp2350_remote_display.display.query_ntp", return_value=sample) as query, patch(
             "rp2350_remote_display.display.current_utc_from_sample", return_value=sample.datetime_utc
         ):
             result = display.sync_rtc_from_ntp("test.ntp", timeout=0.3)
@@ -142,6 +142,9 @@ class RtcCommandTests(unittest.TestCase):
         self.assertEqual(result.sample, sample)
         self.assertEqual(result.target_datetime_utc, calls[0])
         self.assertEqual(result.rtc, result_reading)
+        query.assert_called_once_with(
+            "test.ntp", port=123, timeout=0.3, max_offset_seconds=86_400.0
+        )
 
 
 if __name__ == "__main__":

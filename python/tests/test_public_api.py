@@ -19,6 +19,7 @@ class PublicApiTests(unittest.TestCase):
             "RemoteDisplay",
             "RemoteDisplayAccessError",
             "RemoteDisplayError",
+            "RemoteDisplayTransportError",
             "Rect",
             "rgb565",
         ):

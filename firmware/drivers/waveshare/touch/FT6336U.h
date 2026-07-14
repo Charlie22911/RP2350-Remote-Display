@@ -29,6 +29,7 @@
 #ifndef _FT6336U_H_
 #define _FT6336U_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "hardware/i2c.h"
 #include "pico/time.h"
@@ -138,11 +139,11 @@ typedef struct
 
 extern FT6336U_Struct FT6336U;
 
-void FT6336U_Init(uint8_t mode);
+bool FT6336U_Init(uint8_t mode);
 void FT6336U_Reset();
 uint16_t FT6336U_ReadID();
 uint16_t FT6336U_ReadState(Value_Information info);
-void FT6336U_Get_Point();
+bool FT6336U_Get_Point(void);
 uint8_t FT6336U_Get_Gesture();
 
 #endif // !_FT6336U_H_

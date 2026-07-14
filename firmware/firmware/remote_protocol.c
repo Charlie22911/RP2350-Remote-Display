@@ -9,10 +9,15 @@
 #include "tusb.h"
 
 #define RPD_PARSER_TIMEOUT_MS 250u
+#define RPD_STAGED_TRANSFER_TIMEOUT_MS 1000u
 #define RPD_PRESENT_DELAY_MS 2u
-#define RPD_TX_QUEUE_DEPTH 16u
+#define RPD_TX_QUEUE_DEPTH 24u
 #define RPD_TX_MAX_PAYLOAD 64u
 #define RPD_TOUCH_EDGE_QUEUE_DEPTH 8u
+#define RPD_USB_READ_CHUNK_BYTES 64u
+/* One 64-byte read can complete at most six minimum-size packets. Leave two
+ * additional slots for a parser/staged timeout and an asynchronous present ACK. */
+#define RPD_TX_READ_REPLY_RESERVE 8u
 
 typedef enum {
     RPD_PARSE_HEADER = 0,
@@ -33,6 +38,7 @@ static uint32_t last_receive_ms;
 
 static bool session_ready;
 static bool session_packet_crc_enabled;
+static bool touch_supported;
 static bool frame_active;
 static uint32_t active_frame_id;
 static bool mounted_last_task;
@@ -42,12 +48,16 @@ static bool present_pending;
 static bool present_ack_pending;
 static uint32_t present_ack_sequence;
 static uint8_t present_ack_command;
+static uint8_t present_ack_flags;
 static absolute_time_t present_not_before;
 
 static struct {
     bool active;
     bool verify_content_crc;
     uint32_t expected_content_crc32;
+    uint32_t last_activity_ms;
+    uint32_t last_sequence;
+    uint8_t last_command;
     rpd_tile_begin_payload_t metadata;
     uint16_t received_length;
 } staged_tile;
@@ -57,6 +67,9 @@ static struct {
     bool active;
     bool verify_content_crc;
     uint32_t expected_content_crc32;
+    uint32_t last_activity_ms;
+    uint32_t last_sequence;
+    uint8_t last_command;
     rpd_resource_begin_payload_t metadata;
     uint16_t received_length;
 } staged_resource;
@@ -83,6 +96,7 @@ static bool touch_state_known;
 static bool touch_last_pressed;
 
 _Static_assert(sizeof(rpd_packet_header_t) == 12, "Unexpected packet header size");
+_Static_assert(RPD_TX_READ_REPLY_RESERVE < RPD_TX_QUEUE_DEPTH, "TX reply reserve must leave queue capacity");
 _Static_assert(sizeof(rpd_hello_reply_t) == 24, "Unexpected HELLO reply size");
 _Static_assert(sizeof(rpd_tile_begin_payload_t) == 18, "Unexpected tile begin size");
 _Static_assert(sizeof(rpd_tile_chunk_payload_t) == 6, "Unexpected tile chunk size");
@@ -206,6 +220,7 @@ static void reset_session_state(void)
     present_ack_pending = false;
     present_ack_sequence = 0u;
     present_ack_command = 0u;
+    present_ack_flags = 0u;
     reset_staged_tile();
     reset_staged_resource();
     clear_touch_queue();
@@ -332,25 +347,41 @@ static uint8_t session_reply_flags(void)
     return session_packet_crc_enabled ? RPD_PACKET_FLAG_CRC32 : 0u;
 }
 
-static void send_small_packet(uint8_t type, uint32_t sequence, const void *payload, uint16_t payload_length)
+static void send_small_packet_with_flags(uint8_t type, uint8_t flags, uint32_t sequence,
+                                         const void *payload, uint16_t payload_length)
 {
-    const uint8_t flags = session_reply_flags();
     tx_drain();
     if (!tx_write_now(type, flags, sequence, payload, payload_length)) {
         (void)tx_queue_push(type, flags, sequence, payload, payload_length);
     }
 }
 
-static void send_ack(uint32_t sequence)
+static void send_small_packet(uint8_t type, uint32_t sequence, const void *payload, uint16_t payload_length)
+{
+    send_small_packet_with_flags(type, session_reply_flags(), sequence, payload, payload_length);
+}
+
+static void send_ack_with_flags(uint32_t sequence, uint8_t flags)
 {
     const uint8_t status = RPD_STATUS_OK;
-    send_small_packet(RPD_MSG_ACK, sequence, &status, sizeof(status));
+    send_small_packet_with_flags(RPD_MSG_ACK, flags, sequence, &status, sizeof(status));
+}
+
+static void send_ack(uint32_t sequence)
+{
+    send_ack_with_flags(sequence, session_reply_flags());
+}
+
+static void send_error_with_flags(uint32_t sequence, uint8_t command, rpd_status_t status,
+                                  uint8_t flags)
+{
+    const uint8_t payload[2] = {(uint8_t)status, command};
+    send_small_packet_with_flags(RPD_MSG_ERROR, flags, sequence, payload, sizeof(payload));
 }
 
 static void send_error(uint32_t sequence, uint8_t command, rpd_status_t status)
 {
-    const uint8_t payload[2] = {(uint8_t)status, command};
-    send_small_packet(RPD_MSG_ERROR, sequence, payload, sizeof(payload));
+    send_error_with_flags(sequence, command, status, session_reply_flags());
 }
 
 static bool read_u16(const uint8_t *bytes, uint16_t length, uint16_t offset, uint16_t *value)
@@ -386,23 +417,42 @@ static bool read_frame_id(const uint8_t *payload, uint16_t payload_length, uint3
     return true;
 }
 
-static void schedule_present(uint32_t acknowledgement_sequence, uint8_t acknowledgement_command,
-                             bool acknowledge_after_present)
+static void schedule_present_with_flags(uint32_t acknowledgement_sequence,
+                                        uint8_t acknowledgement_command,
+                                        bool acknowledge_after_present,
+                                        uint8_t acknowledgement_flags)
 {
     present_pending = true;
     present_ack_pending = acknowledge_after_present;
     present_ack_sequence = acknowledgement_sequence;
     present_ack_command = acknowledgement_command;
+    present_ack_flags = acknowledge_after_present ? acknowledgement_flags : 0u;
     present_not_before = make_timeout_time_ms(RPD_PRESENT_DELAY_MS);
+}
+
+static void schedule_present(uint32_t acknowledgement_sequence, uint8_t acknowledgement_command,
+                             bool acknowledge_after_present)
+{
+    schedule_present_with_flags(acknowledgement_sequence, acknowledgement_command,
+                                acknowledge_after_present, session_reply_flags());
 }
 
 static void enter_waiting_state(void)
 {
+    /* Recovery may be triggered asynchronously. Stop panel DMA before changing
+     * framebuffer contents and discard any acknowledgement for the old present. */
+    renderer_cancel_present();
+    present_pending = false;
+    present_ack_pending = false;
+    present_ack_sequence = 0u;
+    present_ack_command = 0u;
+    present_ack_flags = 0u;
     session_ready = false;
     session_packet_crc_enabled = false;
     frame_active = false;
     active_frame_id = 0u;
     reset_staged_tile();
+    reset_staged_resource();
     waiting_screen_visible = true;
     renderer_show_waiting_screen();
     schedule_present(0u, 0u, false);
@@ -529,18 +579,19 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
             .large_tile_height = RPD_TILE_LARGE_HEIGHT,
             .max_payload = RPD_MAX_PAYLOAD,
             .capabilities = RPD_CAP_RGB565_TILES | RPD_CAP_ALPHA8_TILES | RPD_CAP_RLE |
-                            RPD_CAP_TOUCH_EVENTS | RPD_CAP_PRIMITIVES | RPD_CAP_OPTIONAL_PACKET_CRC32 |
+                            RPD_CAP_PRIMITIVES | RPD_CAP_OPTIONAL_PACKET_CRC32 |
                             RPD_CAP_FRAME_TRANSACTIONS | RPD_CAP_WAITING_SCREEN | RPD_CAP_BRIGHTNESS |
                             RPD_CAP_SESSION_REATTACH | RPD_CAP_TILE_PROFILES | RPD_CAP_SEGMENTED_TILES |
                             RPD_CAP_CANVAS_CRC32 | RPD_CAP_OPTIONAL_TILE_CRC32 |
                             RPD_CAP_DIRTY_TILE_PRESENT | RPD_CAP_RESOURCE_CACHE |
                             RPD_CAP_PALETTE4_TILES | RPD_CAP_ASYNC_PRESENT |
-                            RPD_CAP_TOUCH_COALESCING | RPD_CAP_DEVICE_TEXT |
+                            RPD_CAP_DEVICE_TEXT |
                             RPD_CAP_COPY_RECT | RPD_CAP_SCROLL_RECT |
                             RPD_CAP_PALETTE64_TILES |
                             RPD_CAP_RGB565_SCALE2 |
                             RPD_CAP_PALETTE4_SCALE2 |
                             RPD_CAP_PALETTE64_SCALE2 |
+                            (touch_supported ? (RPD_CAP_TOUCH_EVENTS | RPD_CAP_TOUCH_COALESCING) : 0u) |
                             (rpd_rtc_is_available() ? RPD_CAP_RTC_PCF85063 : 0u),
         };
         send_small_packet(RPD_MSG_HELLO_REPLY, header->sequence, &reply, sizeof(reply));
@@ -557,8 +608,9 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
 
     case RPD_MSG_FRAME_BEGIN: {
         uint32_t frame_id;
-        if (!session_ready || present_pending) {
-            send_error(header->sequence, header->type, RPD_STATUS_NOT_READY);
+        if (!session_ready || present_pending || staged_resource.active) {
+            send_error(header->sequence, header->type,
+                       staged_resource.active ? RPD_STATUS_RESOURCE_STATE : RPD_STATUS_NOT_READY);
             return;
         }
         if (!read_frame_id(payload, header->payload_length, &frame_id) || frame_active) {
@@ -600,8 +652,10 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
             return;
         }
 
+        const uint8_t acknowledgement_flags = session_reply_flags();
         enter_waiting_state();
-        schedule_present(header->sequence, RPD_MSG_FRAME_ABORT, true);
+        schedule_present_with_flags(header->sequence, RPD_MSG_FRAME_ABORT, true,
+                                    acknowledgement_flags);
         return;
     }
 
@@ -762,7 +816,10 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
             return;
         }
         memcpy(&command, payload, sizeof(command));
-        renderer_line(command.x0, command.y0, command.x1, command.y1, command.color, command.thickness);
+        if (!renderer_line(command.x0, command.y0, command.x1, command.y1,
+                           command.color, command.thickness)) {
+            abort_active_frame(header->sequence, header->type, RPD_STATUS_BAD_ARGUMENT);
+        }
         return;
     }
 
@@ -875,6 +932,9 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
         staged_tile.active = true;
         staged_tile.verify_content_crc = verify_content_crc;
         staged_tile.expected_content_crc32 = content_crc;
+        staged_tile.last_activity_ms = to_ms_since_boot(get_absolute_time());
+        staged_tile.last_sequence = header->sequence;
+        staged_tile.last_command = header->type;
         staged_tile.metadata = command;
         staged_tile.received_length = 0u;
         return;
@@ -896,6 +956,9 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
         }
         memcpy(staged_tile_data + staged_tile.received_length, payload + sizeof(chunk), data_length);
         staged_tile.received_length = (uint16_t)(staged_tile.received_length + data_length);
+        staged_tile.last_activity_ms = to_ms_since_boot(get_absolute_time());
+        staged_tile.last_sequence = header->sequence;
+        staged_tile.last_command = header->type;
         return;
     }
 
@@ -957,6 +1020,9 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
         staged_resource.active = true;
         staged_resource.verify_content_crc = verify_content_crc;
         staged_resource.expected_content_crc32 = content_crc;
+        staged_resource.last_activity_ms = to_ms_since_boot(get_absolute_time());
+        staged_resource.last_sequence = header->sequence;
+        staged_resource.last_command = header->type;
         staged_resource.metadata = command;
         staged_resource.received_length = 0u;
         return;
@@ -979,6 +1045,9 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
         }
         memcpy(staged_resource_data + staged_resource.received_length, payload + sizeof(chunk), data_length);
         staged_resource.received_length = (uint16_t)(staged_resource.received_length + data_length);
+        staged_resource.last_activity_ms = to_ms_since_boot(get_absolute_time());
+        staged_resource.last_sequence = header->sequence;
+        staged_resource.last_command = header->type;
         return;
     }
 
@@ -1006,6 +1075,12 @@ static void handle_packet(const rpd_packet_header_t *header, const uint8_t *payl
         const rpd_resource_begin_payload_t command = staged_resource.metadata;
         const uint16_t data_length = staged_resource.received_length;
         reset_staged_resource();
+        if (!rpd_resource_cache_encoded_data_valid(command.width, command.height,
+                                                   command.pixel_format, command.codec,
+                                                   staged_resource_data, data_length)) {
+            send_error(header->sequence, header->type, RPD_STATUS_DECODE_ERROR);
+            return;
+        }
         if (!rpd_resource_cache_define(command.resource_id, command.width, command.height,
                                        command.pixel_format, command.codec,
                                        staged_resource_data, data_length)) {
@@ -1253,8 +1328,29 @@ static void parser_timeout_task(void)
     reset_parser();
 }
 
-void rpd_protocol_init(void)
+static void staged_transfer_timeout_task(void)
 {
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (staged_tile.active &&
+        (uint32_t)(now - staged_tile.last_activity_ms) >= RPD_STAGED_TRANSFER_TIMEOUT_MS) {
+        const uint32_t sequence = staged_tile.last_sequence;
+        const uint8_t command = staged_tile.last_command;
+        send_error(sequence, command, RPD_STATUS_TIMEOUT);
+        enter_waiting_state();
+        return;
+    }
+    if (staged_resource.active &&
+        (uint32_t)(now - staged_resource.last_activity_ms) >= RPD_STAGED_TRANSFER_TIMEOUT_MS) {
+        const uint32_t sequence = staged_resource.last_sequence;
+        const uint8_t command = staged_resource.last_command;
+        send_error(sequence, command, RPD_STATUS_TIMEOUT);
+        reset_session_state();
+    }
+}
+
+void rpd_protocol_init(bool touch_available)
+{
+    touch_supported = touch_available;
     rpd_rtc_init();
     rpd_resource_cache_init();
     reset_transport_state();
@@ -1276,8 +1372,12 @@ void rpd_protocol_task(void)
     }
     mounted_last_task = true;
 
-    uint8_t buffer[64];
-    while (tud_vendor_available() != 0u) {
+    /* Drain first and stop consuming OUT packets before required replies can
+     * fill the bounded queue. TinyUSB then supplies natural endpoint backpressure. */
+    tx_drain();
+    uint8_t buffer[RPD_USB_READ_CHUNK_BYTES];
+    while (tud_vendor_available() != 0u &&
+           tx_count <= RPD_TX_QUEUE_DEPTH - RPD_TX_READ_REPLY_RESERVE) {
         const uint32_t count = tud_vendor_read(buffer, sizeof(buffer));
         if (count == 0u) {
             break;
@@ -1286,9 +1386,11 @@ void rpd_protocol_task(void)
         for (uint32_t index = 0u; index < count; ++index) {
             parser_consume_byte(buffer[index]);
         }
+        tx_drain();
     }
 
     parser_timeout_task();
+    staged_transfer_timeout_task();
     tx_drain();
     touch_tx_drain();
 }
@@ -1301,14 +1403,20 @@ void rpd_protocol_display_task(void)
 
     if (!renderer_present_active()) {
         if (!renderer_present_begin()) {
+            const bool acknowledge = present_ack_pending;
+            const uint32_t acknowledgement_sequence = present_ack_sequence;
+            const uint8_t acknowledgement_command = present_ack_command;
+            const uint8_t acknowledgement_flags = present_ack_flags;
             reset_session_state();
             waiting_screen_visible = true;
             renderer_show_waiting_screen();
-            present_pending = false;
-            if (present_ack_pending) {
-                send_error(present_ack_sequence, present_ack_command, RPD_STATUS_DISPLAY_ERROR);
+            if (acknowledge) {
+                send_error_with_flags(acknowledgement_sequence, acknowledgement_command,
+                                      RPD_STATUS_DISPLAY_ERROR, acknowledgement_flags);
             }
-            present_ack_pending = false;
+            /* Retry only the recovery screen after quiescing the transport. */
+            present_pending = true;
+            present_not_before = make_timeout_time_ms(RPD_PRESENT_DELAY_MS);
             return;
         }
     }
@@ -1321,14 +1429,16 @@ void rpd_protocol_display_task(void)
     const bool acknowledge = present_ack_pending;
     const uint32_t acknowledgement_sequence = present_ack_sequence;
     const uint8_t acknowledgement_command = present_ack_command;
+    const uint8_t acknowledgement_flags = present_ack_flags;
     present_pending = false;
     present_ack_pending = false;
     present_ack_sequence = 0u;
     present_ack_command = 0u;
+    present_ack_flags = 0u;
 
     if (status == RENDERER_PRESENT_COMPLETE) {
         if (acknowledge) {
-            send_ack(acknowledgement_sequence);
+            send_ack_with_flags(acknowledgement_sequence, acknowledgement_flags);
         }
         return;
     }
@@ -1337,16 +1447,22 @@ void rpd_protocol_display_task(void)
     waiting_screen_visible = true;
     renderer_show_waiting_screen();
     if (acknowledge) {
-        send_error(acknowledgement_sequence, acknowledgement_command, RPD_STATUS_DISPLAY_ERROR);
+        send_error_with_flags(acknowledgement_sequence, acknowledgement_command,
+                              RPD_STATUS_DISPLAY_ERROR, acknowledgement_flags);
     }
     // Render the recovery screen asynchronously after reporting the error.
     present_pending = true;
     present_not_before = make_timeout_time_ms(RPD_PRESENT_DELAY_MS);
 }
 
+bool rpd_protocol_touch_sync_required(void)
+{
+    return touch_supported && session_ready && !touch_state_known;
+}
+
 void rpd_protocol_send_touch(uint16_t x, uint16_t y, bool pressed, uint8_t contacts)
 {
-    if (!session_ready || !tud_mounted()) {
+    if (!touch_supported || !session_ready || !tud_mounted()) {
         return;
     }
 

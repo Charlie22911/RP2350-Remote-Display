@@ -5,38 +5,92 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.14"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: ${{ matrix.python-version }}
       - name: Check release metadata
         run: python scripts/check-version-consistency.py
       - name: Install package and test dependencies
-        run: python -m pip install -e "./python[dev]"
+        run: python -m pip install --disable-pip-version-check -e "./python[dev]"
       - name: Run unit tests
         run: python -m pytest python/tests
 
-  functional-preflight:
+  source-verification:
+    name: Complete source verification
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.12"
-      - name: Check release metadata
-        run: python scripts/check-version-consistency.py
       - name: Install deterministic layout font
         run: |
           sudo apt-get update
           sudo apt-get install --yes fontconfig fonts-dejavu-core
-      - name: Validate functional-test layout
-        run: ./functional-test/run.sh --preflight-only
+      - name: Run Python, asset, layout, renderer, font, and RTC checks
+        env:
+          PYTHON: python
+          RPD_VERIFY_VENV: ${{ runner.temp }}/rpd-verify-venv
+        run: ./scripts/verify.sh
+
+  package-build:
+    name: Build and install distribution / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: Build wheel and source distribution on Linux
+        if: runner.os == 'Linux'
+        env:
+          PYTHON: python
+        run: ./scripts/build-python-wheel.sh
+      - name: Build wheel and source distribution on Windows
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade build
+          python -m build --outdir dist python
+      - name: Install and inspect the built wheel
+        run: |
+          python -c "import glob, subprocess, sys; wheels = glob.glob('dist/*.whl'); assert len(wheels) == 1, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--force-reinstall', wheels[0]])"
+          python -m pip check
+          python -c "import pathlib, rp2350_remote_display as rpd; expected = pathlib.Path('VERSION').read_text().strip(); assert rpd.__version__ == expected, (rpd.__version__, expected)"
+      - name: Upload Python distributions
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: rp2350-remote-display-python-dist-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error

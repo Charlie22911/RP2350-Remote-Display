@@ -27,8 +27,8 @@ from typing import Callable, Iterator, Sequence
 
 try:
     import fcntl
-except ImportError as exc:  # pragma: no cover - Linux-only example
-    raise SystemExit("This example currently requires Linux.") from exc
+except ImportError:  # pragma: no cover - exercised by Windows imports
+    fcntl = None
 
 from rp2350_remote_display import RemoteDisplay, rgb565
 
@@ -878,6 +878,8 @@ def interface_ipv4_from_ip_command(iface: str) -> str | None:
 
 
 def interface_ipv4_from_ioctl(iface: str) -> str | None:
+    if fcntl is None:
+        return None
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         ifreq = struct.pack("256s", iface.encode("utf-8")[:15])
@@ -1441,6 +1443,8 @@ def contains(rect: Rect, x: int, y: int) -> bool:
 
 
 def run() -> None:
+    if fcntl is None:
+        raise SystemExit("This example currently requires Linux.")
     config = default_monitor_config()
     if sys.stdin.isatty():
         config = configure_dashboard(config)

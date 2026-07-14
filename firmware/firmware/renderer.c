@@ -521,23 +521,135 @@ void renderer_stroke_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t heigh
     }
 }
 
-void renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t rgb565, uint8_t thickness)
+enum {
+    LINE_OUT_LEFT = 1u << 0,
+    LINE_OUT_RIGHT = 1u << 1,
+    LINE_OUT_TOP = 1u << 2,
+    LINE_OUT_BOTTOM = 1u << 3,
+};
+
+typedef struct {
+    int32_t x0;
+    int32_t y0;
+    int32_t x1;
+    int32_t y1;
+    int32_t radius;
+    uint32_t work;
+} clipped_line_t;
+
+static uint8_t line_outcode(int32_t x, int32_t y, int32_t min_x, int32_t min_y,
+                            int32_t max_x, int32_t max_y)
 {
-    int32_t start_x = x0;
-    int32_t start_y = y0;
-    const int32_t end_x = x1;
-    const int32_t end_y = y1;
+    uint8_t code = 0u;
+    if (x < min_x) {
+        code |= LINE_OUT_LEFT;
+    } else if (x > max_x) {
+        code |= LINE_OUT_RIGHT;
+    }
+    if (y < min_y) {
+        code |= LINE_OUT_TOP;
+    } else if (y > max_y) {
+        code |= LINE_OUT_BOTTOM;
+    }
+    return code;
+}
+
+static bool clip_line_to_canvas(clipped_line_t *line)
+{
+    const int32_t min_x = -line->radius;
+    const int32_t min_y = -line->radius;
+    const int32_t max_x = (int32_t)RPD_SCREEN_WIDTH - 1 + line->radius;
+    const int32_t max_y = (int32_t)RPD_SCREEN_HEIGHT - 1 + line->radius;
+
+    while (true) {
+        const uint8_t code0 = line_outcode(line->x0, line->y0, min_x, min_y, max_x, max_y);
+        const uint8_t code1 = line_outcode(line->x1, line->y1, min_x, min_y, max_x, max_y);
+        if ((code0 | code1) == 0u) {
+            return true;
+        }
+        if ((code0 & code1) != 0u) {
+            return false;
+        }
+
+        const uint8_t outside = code0 != 0u ? code0 : code1;
+        int32_t x;
+        int32_t y;
+        if ((outside & LINE_OUT_TOP) != 0u) {
+            y = min_y;
+            x = line->x0 + (int32_t)(((int64_t)(line->x1 - line->x0) * (min_y - line->y0)) /
+                                     (line->y1 - line->y0));
+        } else if ((outside & LINE_OUT_BOTTOM) != 0u) {
+            y = max_y;
+            x = line->x0 + (int32_t)(((int64_t)(line->x1 - line->x0) * (max_y - line->y0)) /
+                                     (line->y1 - line->y0));
+        } else if ((outside & LINE_OUT_RIGHT) != 0u) {
+            x = max_x;
+            y = line->y0 + (int32_t)(((int64_t)(line->y1 - line->y0) * (max_x - line->x0)) /
+                                     (line->x1 - line->x0));
+        } else {
+            x = min_x;
+            y = line->y0 + (int32_t)(((int64_t)(line->y1 - line->y0) * (min_x - line->x0)) /
+                                     (line->x1 - line->x0));
+        }
+
+        if (outside == code0) {
+            line->x0 = x;
+            line->y0 = y;
+        } else {
+            line->x1 = x;
+            line->y1 = y;
+        }
+    }
+}
+
+static bool prepare_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1,
+                         uint8_t thickness, clipped_line_t *line)
+{
+    if (line == NULL) {
+        return false;
+    }
+    const uint32_t normalized_thickness = thickness == 0u ? 1u : thickness;
+    if (normalized_thickness > RPD_LINE_MAX_THICKNESS) {
+        return false;
+    }
+
+    line->x0 = x0;
+    line->y0 = y0;
+    line->x1 = x1;
+    line->y1 = y1;
+    line->radius = (int32_t)(normalized_thickness / 2u);
+    line->work = 0u;
+    if (!clip_line_to_canvas(line)) {
+        return true;
+    }
+
+    const uint32_t dx = (uint32_t)(line->x0 < line->x1 ? line->x1 - line->x0 : line->x0 - line->x1);
+    const uint32_t dy = (uint32_t)(line->y0 < line->y1 ? line->y1 - line->y0 : line->y0 - line->y1);
+    const uint32_t diameter = (uint32_t)(line->radius * 2 + 1);
+    line->work = ((dx > dy ? dx : dy) + 1u) * diameter * diameter;
+    return line->work <= RPD_LINE_MAX_WORK;
+}
+
+static void draw_prepared_line(const clipped_line_t *line, uint16_t rgb565)
+{
+    if (line->work == 0u) {
+        return;
+    }
+
+    int32_t start_x = line->x0;
+    int32_t start_y = line->y0;
+    const int32_t end_x = line->x1;
+    const int32_t end_y = line->y1;
     const int32_t dx = start_x < end_x ? end_x - start_x : start_x - end_x;
     const int32_t sx = start_x < end_x ? 1 : -1;
     const int32_t dy = start_y < end_y ? start_y - end_y : end_y - start_y;
     const int32_t sy = start_y < end_y ? 1 : -1;
     int32_t error = dx + dy;
-    const int32_t radius = (thickness == 0 ? 1 : thickness) / 2;
     const uint16_t value = panel_word(rgb565);
 
     while (true) {
-        for (int32_t oy = -radius; oy <= radius; ++oy) {
-            for (int32_t ox = -radius; ox <= radius; ++ox) {
+        for (int32_t oy = -line->radius; oy <= line->radius; ++oy) {
+            for (int32_t ox = -line->radius; ox <= line->radius; ++ox) {
                 write_pixel(start_x + ox, start_y + oy, value);
             }
         }
@@ -557,8 +669,8 @@ void renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t 
         }
     }
 
-    int32_t min_y = (int32_t)(y0 < y1 ? y0 : y1) - radius;
-    int32_t max_y = (int32_t)(y0 > y1 ? y0 : y1) + radius;
+    int32_t min_y = (line->y0 < line->y1 ? line->y0 : line->y1) - line->radius;
+    int32_t max_y = (line->y0 > line->y1 ? line->y0 : line->y1) + line->radius;
     if (min_y < 0) {
         min_y = 0;
     }
@@ -566,6 +678,16 @@ void renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t 
         max_y = (int32_t)RPD_SCREEN_HEIGHT - 1;
     }
     mark_dirty((uint16_t)min_y, (uint16_t)max_y);
+}
+
+bool renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t rgb565, uint8_t thickness)
+{
+    clipped_line_t line;
+    if (!prepare_line(x0, y0, x1, y1, thickness, &line)) {
+        return false;
+    }
+    draw_prepared_line(&line, rgb565);
+    return true;
 }
 
 static bool check_canvas_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height)
@@ -660,14 +782,39 @@ bool renderer_polyline(const uint8_t *payload, uint16_t length)
         return false;
     }
 
+    if ((thickness == 0u ? 1u : thickness) > RPD_LINE_MAX_THICKNESS) {
+        return false;
+    }
+
+    uint32_t total_work = 0u;
     uint16_t previous_x = (uint16_t)payload[4] | ((uint16_t)payload[5] << 8);
     uint16_t previous_y = (uint16_t)payload[6] | ((uint16_t)payload[7] << 8);
+
+    /* Validate the complete command before touching the framebuffer. */
+    for (uint8_t point = 1; point < point_count; ++point) {
+        const uint32_t offset = 4u + (uint32_t)point * 4u;
+        const uint16_t next_x = (uint16_t)payload[offset] | ((uint16_t)payload[offset + 1] << 8);
+        const uint16_t next_y = (uint16_t)payload[offset + 2] | ((uint16_t)payload[offset + 3] << 8);
+        clipped_line_t line;
+        if (!prepare_line(previous_x, previous_y, next_x, next_y, thickness, &line) ||
+            line.work > RPD_LINE_MAX_WORK - total_work) {
+            return false;
+        }
+        total_work += line.work;
+        previous_x = next_x;
+        previous_y = next_y;
+    }
+
+    previous_x = (uint16_t)payload[4] | ((uint16_t)payload[5] << 8);
+    previous_y = (uint16_t)payload[6] | ((uint16_t)payload[7] << 8);
 
     for (uint8_t point = 1; point < point_count; ++point) {
         const uint32_t offset = 4u + (uint32_t)point * 4u;
         const uint16_t next_x = (uint16_t)payload[offset] | ((uint16_t)payload[offset + 1] << 8);
         const uint16_t next_y = (uint16_t)payload[offset + 2] | ((uint16_t)payload[offset + 3] << 8);
-        renderer_line(previous_x, previous_y, next_x, next_y, color, thickness);
+        clipped_line_t line;
+        (void)prepare_line(previous_x, previous_y, next_x, next_y, thickness, &line);
+        draw_prepared_line(&line, color);
         previous_x = next_x;
         previous_y = next_y;
     }

@@ -29,6 +29,7 @@
 #include "FT6336U.h"
 #include "DEV_Config.h"
 #include <inttypes.h>
+#include <string.h>
 
 FT6336U_Struct FT6336U;
 
@@ -36,26 +37,24 @@ FT6336U_Struct FT6336U;
 function :	Send one byte of data to the specified register of FT6336U
 parameter:
 ******************************************************************************/
-static void FT6336U_I2C_Write_Byte(uint8_t reg, uint8_t value) {
-    DEV_I2C_Write_Byte(FT6336U_I2C_ADDR, reg, value);
+static bool FT6336U_I2C_Write_Byte(uint8_t reg, uint8_t value) {
+    return DEV_I2C_Write_Byte(FT6336U_I2C_ADDR, reg, value);
 }
 
 /******************************************************************************
 function :	Read one byte of data from the specified register of FT6336U
 parameter:
 ******************************************************************************/
-static uint8_t FT6336U_I2C_Read_Byte(uint8_t reg) {
-    uint8_t value;
-    value = DEV_I2C_Read_Byte(FT6336U_I2C_ADDR,reg);
-    return value;
+static bool FT6336U_I2C_Read_Byte(uint8_t reg, uint8_t *value) {
+    return DEV_I2C_Read_Byte(FT6336U_I2C_ADDR, reg, value);
 }
 
 /******************************************************************************
 function :	Read n byte of data from the specified register of FT6336U
 parameter:
 ******************************************************************************/
-static void FT6336U_I2C_Read_nByte(uint8_t reg, uint8_t *pData, uint32_t Len) {
-    DEV_I2C_Read_nByte(FT6336U_I2C_ADDR,reg,pData,Len);
+static bool FT6336U_I2C_Read_nByte(uint8_t reg, uint8_t *pData, uint32_t Len) {
+    return DEV_I2C_Read_nByte(FT6336U_I2C_ADDR, reg, pData, Len);
 }
 
 /******************************************************************************
@@ -77,22 +76,25 @@ parameter:
         mode    ：  FT6336U_Point_Mode
                     FT6336U_Gesture_Mode
 ******************************************************************************/
-void FT6336U_Init(uint8_t mode) {
+bool FT6336U_Init(uint8_t mode) {
     // FT6336U Reset
     FT6336U_Reset();
 
+    memset(&FT6336U, 0, sizeof(FT6336U));
     FT6336U.mode = mode;
-    if(mode == FT6336U_Gesture_Mode) {
-        FT6336U_I2C_Write_Byte(FT6336U_ADDR_GESTURE_EN, FT6336U_ADDR_GESTURE_ENABLE);
-    }
-
     int32_t id = FT6336U_ReadID();
     printf("FT6336URegister_WhoAmI = %" PRId32 "\n", id);
     if(id != 0x64) { 
         printf("Invalid device ID: 0x%" PRIx32 "\n", (uint32_t)id);
-        return;
+        return false;
+    }
+    if (mode == FT6336U_Gesture_Mode &&
+        !FT6336U_I2C_Write_Byte(FT6336U_ADDR_GESTURE_EN, FT6336U_ADDR_GESTURE_ENABLE)) {
+        printf("Unable to enable FT6336U gesture mode\n");
+        return false;
     }
     printf("FT6336U initialized successfully\n");
+    return true;
 }
 
 /******************************************************************************
@@ -100,9 +102,8 @@ function :	Read the ID of FT6336U
 parameter:
 ******************************************************************************/
 uint16_t FT6336U_ReadID() {
-    uint8_t id;
-    id = FT6336U_I2C_Read_Byte(FT6336U_ADDR_CHIP_ID);
-    return id;
+    uint8_t id = 0u;
+    return FT6336U_I2C_Read_Byte(FT6336U_ADDR_CHIP_ID, &id) ? id : UINT16_MAX;
 }
 
 /******************************************************************************
@@ -114,27 +115,25 @@ uint16_t FT6336U_ReadState(Value_Information info) {
     
     switch(info) {
         case FT6336U_GESTURE_ID:
-            buf[0] = FT6336U_I2C_Read_Byte(FT6336U_ADDR_GESTURE_OUTPUT);
-            return buf[0];
+            return FT6336U_I2C_Read_Byte(FT6336U_ADDR_GESTURE_OUTPUT, &buf[0]) ? buf[0] : UINT16_MAX;
 
         case FT6336U_FINGER_NUMBER:
-            buf[0] = FT6336U_I2C_Read_Byte(FT6336U_ADDR_TD_STATUS);
-            return buf[0];
+            return FT6336U_I2C_Read_Byte(FT6336U_ADDR_TD_STATUS, &buf[0]) ? buf[0] : UINT16_MAX;
 
         case FT6336U_TOUCH1_X:
-            FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH1_X, buf, 2);
+            if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH1_X, buf, 2u)) return UINT16_MAX;
             return ((int16_t)(buf[0] & 0x0F) << 8) | buf[1];
             
         case FT6336U_TOUCH1_Y:
-            FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH1_Y, buf, 2);
+            if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH1_Y, buf, 2u)) return UINT16_MAX;
             return ((int16_t)(buf[0] & 0x0F) << 8) | buf[1];
 
         case FT6336U_TOUCH2_X:
-            FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_X, buf, 2);
+            if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_X, buf, 2u)) return UINT16_MAX;
             return ((int16_t)(buf[0] & 0x0F) << 8) | buf[1];
             
         case FT6336U_TOUCH2_Y:
-            FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_Y, buf, 2);
+            if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_Y, buf, 2u)) return UINT16_MAX;
             return ((int16_t)(buf[0] & 0x0F) << 8) | buf[1];
     }
     return -1;
@@ -144,7 +143,7 @@ uint16_t FT6336U_ReadState(Value_Information info) {
 function :	Get the coordinate value of FT6336U contact
 parameter:
 ******************************************************************************/
-void FT6336U_Get_Point() {
+bool FT6336U_Get_Point(void) {
     /*
      * The controller stores TD_STATUS plus touch-one coordinates in one
      * consecutive register range.  Read it in a single I2C transaction so
@@ -152,7 +151,9 @@ void FT6336U_Get_Point() {
      * Touch two is fetched only when the controller reports a second contact.
      */
     uint8_t first[5] = {0};
-    FT6336U_I2C_Read_nByte(FT6336U_ADDR_TD_STATUS, first, sizeof(first));
+    if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TD_STATUS, first, sizeof(first))) {
+        return false;
+    }
 
     uint8_t fingers = (uint8_t)(first[0] & 0x0Fu);
     if (fingers > 2u) {
@@ -166,7 +167,9 @@ void FT6336U_Get_Point() {
 
     if (fingers == 2u) {
         uint8_t second[4] = {0};
-        FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_X, second, sizeof(second));
+        if (!FT6336U_I2C_Read_nByte(FT6336U_ADDR_TOUCH2_X, second, sizeof(second))) {
+            return false;
+        }
         FT6336U.touch2_x = (uint16_t)(((uint16_t)(second[0] & 0x0Fu) << 8u) | second[1]);
         FT6336U.touch2_y = (uint16_t)(((uint16_t)(second[2] & 0x0Fu) << 8u) | second[3]);
     } else {
@@ -175,6 +178,7 @@ void FT6336U_Get_Point() {
     }
 
     FT6336U.touch_num = fingers;
+    return true;
 }
 
 /******************************************************************************

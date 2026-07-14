@@ -11,6 +11,8 @@ Options:
   --debug             Configure a Debug build. Default: Release
   --clean             Delete the selected build directory before configuring.
   --clock-khz VALUE   RP2350 system clock in kHz. Default: 250000
+  --psram-max-sck-hz VALUE
+                       Maximum requested PSRAM serial clock in Hz. Default: 133000000
   --vid VALUE         USB vendor ID as a C integer literal. Default: 0xCAFE
   --pid VALUE         USB product ID as a C integer literal. Default: 0x4010
   -h, --help          Show this help.
@@ -28,6 +30,7 @@ SDK_PATH="${PICO_SDK_PATH:-}"
 BUILD_TYPE="Release"
 CLEAN=0
 CLOCK_KHZ="250000"
+PSRAM_MAX_SCK_HZ="133000000"
 USB_VID="0xCAFE"
 USB_PID="0x4010"
 
@@ -54,6 +57,11 @@ while [[ $# -gt 0 ]]; do
         --clock-khz)
             [[ $# -ge 2 ]] || { echo "--clock-khz requires a value." >&2; exit 2; }
             CLOCK_KHZ="$2"
+            shift 2
+            ;;
+        --psram-max-sck-hz)
+            [[ $# -ge 2 ]] || { echo "--psram-max-sck-hz requires a value." >&2; exit 2; }
+            PSRAM_MAX_SCK_HZ="$2"
             shift 2
             ;;
         --vid)
@@ -112,6 +120,7 @@ cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" \
     -DPICO_SDK_PATH="$PICO_SDK_PATH" \
     -DPICO_BOARD=waveshare_rp2350_touch_amoled_2.41 \
     -DRPD_SYS_CLOCK_KHZ="$CLOCK_KHZ" \
+    -DRPD_PSRAM_MAX_SCK_HZ="$PSRAM_MAX_SCK_HZ" \
     -DRPD_USB_VID="$USB_VID" \
     -DRPD_USB_PID="$USB_PID"
 

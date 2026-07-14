@@ -1,3 +1,7 @@
+; SPDX-License-Identifier: MIT
+; Derived from Waveshare Team RP2350 Touch AMOLED board support (2025-03-20).
+; Keep this notice with redistributed or modified copies.
+
 .pio_version 0 // only requires PIO version 0
 
 ;4-wire data output

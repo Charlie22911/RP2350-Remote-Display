@@ -33,6 +33,8 @@ Two optional integrity checks exist for diagnostic and test use:
 
 USB already supplies link-layer error detection and retry. Enable the optional checks when validating a transport path or reproducing a suspected corruption issue.
 
+A CRC-protected `HELLO` enables CRC protection on firmware replies for that session. The Python `strict_packet_crc=True` mode protects its requests and rejects any incoming packet that does not also carry a valid packet CRC.
+
 ## Session and frame lifecycle
 
 A normal session follows this sequence:
@@ -44,7 +46,9 @@ A normal session follows this sequence:
 5. Send `FRAME_END`.
 6. Wait for its `ACK`, which follows display presentation.
 
-`HELLO` can be used to establish a clean new session after an interrupted host. `SESSION_CLOSE` ends the session while leaving the visible framebuffer unchanged.
+`HELLO` can be used to establish a clean new session after an interrupted host. It resets any frame, segmented transfer, and resource-cache state on the device. `SESSION_CLOSE` ends the session while leaving the visible framebuffer unchanged.
+
+Every synchronous reply or error carries the sequence of the request that produced it. A host must match both sequence and expected reply type; it must not apply a delayed error from an expired request to a newer request. `TOUCH` remains asynchronous and should be routed independently.
 
 ### Command-state rules
 
@@ -57,7 +61,9 @@ A normal session follows this sequence:
 | Font inspection, text measurement, framebuffer CRC, RTC read/write | Outside a frame |
 | Brightness | Established session with no pending presentation |
 
-Malformed data, an invalid command state, or a decode failure can abort the active frame. Treat an `ERROR` response as a failed operation and restore a known session state before continuing.
+Malformed data, an invalid command state, a transfer timeout, or a decode failure can invalidate the active session. Treat an `ERROR` response as a failed operation and restore a known session state before continuing. The Python host invalidates its negotiated `DisplayInfo` after protocol or transport uncertainty. Call `recover_session()` to drain stale input and perform a new `HELLO`; upload all cached resources again afterward.
+
+The firmware discards an incomplete packet after 250 ms without progress. A segmented tile or resource upload expires after 1,000 ms without transfer activity. Either staged-transfer timeout invalidates the session and clears cached resources; a tile timeout also returns the display to its waiting state. Perform a new `HELLO` and upload required resources again.
 
 ## Message groups
 
@@ -73,6 +79,8 @@ Malformed data, an invalid command state, or a decode failure can abort the acti
 | RTC | `RTC_READ`, `RTC_SET` |
 
 Replies include `HELLO_REPLY`, `PONG`, `ACK`, `ERROR`, framebuffer CRC, resource information, font information, text metrics, and RTC data. `TOUCH` is an asynchronous event that can arrive while the host waits for another reply.
+
+`PING` echoes at most 64 payload bytes. `LINE` and each `POLYLINE` segment are clipped to the canvas before rasterization. Line thickness zero is normalized to one, thickness is limited to 32 pixels, and one line or complete polyline is limited to 1,000,000 clipped pixel-write attempts. Commands above those limits fail with `BAD_ARGUMENT` rather than monopolizing the device loop.
 
 ## Canvas and image transport
 

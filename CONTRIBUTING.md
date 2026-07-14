@@ -21,13 +21,15 @@ Document changes that affect setup, supported hardware, public API behavior, pro
 
 ## Release-version changes
 
-`VERSION` defines the current project release. Release preparation must keep the Python package, firmware build metadata, functional-test metadata, and current documentation aligned with that value. Run the consistency check before committing:
+`VERSION` defines the current project version. Development checkouts use a value such as `1.2.17.dev0`; published releases use the corresponding final value such as `1.2.17`. Release preparation must keep the Python package, firmware build metadata, functional-test metadata, changelogs, and current documentation aligned. Run the consistency check before committing:
 
 ```bash
 python3 scripts/check-version-consistency.py
 ```
 
 The USB `bcdDevice` value is a compact BCD release code derived from `VERSION`; it is not an independent project version.
+
+Follow the [release guide](docs/releasing.md) for final-version promotion, clean builds, artifact checksums, provenance records, immutable tags, and the post-release development bump.
 
 ## Protocol changes
 

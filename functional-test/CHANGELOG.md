@@ -1,5 +1,10 @@
 # Functional-test release notes
 
+## Unreleased
+
+- Tracks the `1.2.17.dev0` development package and stabilization work after the 1.2.16 release.
+- Runs the complete hardware-independent verification set in continuous integration.
+
 ## 1.2.16
 
 - Updates functional-test metadata for the repository Python package and protocol 16.

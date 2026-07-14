@@ -12,6 +12,7 @@
 #include "pico/flash.h"
 #include "pico/stdlib.h"
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,17 +35,34 @@ static bool _bUseHeapPool = true;
 static bool _bUseHeapPool = false;
 #endif
 
+static bool __no_inline_not_in_flash_func(qmi_wait_for_bits)(uint32_t mask, uint32_t expected)
+{
+    for (uint32_t iteration = 0u; iteration < PSRAM_QMI_WAIT_ITERATIONS; ++iteration)
+    {
+        if ((qmi_hw->direct_csr & mask) == expected)
+        {
+            return true;
+        }
+        __asm__ volatile ("nop");
+    }
+    return false;
+}
+
 static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
 {
     gpio_set_function(psram_cs_pin, GPIO_FUNC_XIP_CS1);
 
     size_t psram_size = 0;
 
-    const int max_psram_freq = 133000000;
     const int clock_hz = clock_get_hz(clk_sys);
-    int clockDivider = (clock_hz + max_psram_freq - 1) / max_psram_freq;
-    if (clockDivider == 1 && clock_hz > 100000000) {
-        clockDivider = 2;
+    if (clock_hz <= 0)
+    {
+        return 0u;
+    }
+    int clockDivider = (clock_hz + (int)PSRAM_MAX_SCK_HZ - 1) / (int)PSRAM_MAX_SCK_HZ;
+    if (clockDivider < 1)
+    {
+        clockDivider = 1;
     }
     int rxdelay = clockDivider;
     if (clock_hz / clockDivider > 100000000) {
@@ -52,12 +70,17 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
     }
 
     // - Max select must be <= 8us.  The value is given in multiples of 64 system clocks.
-    // - Min deselect must be >= 18ns.  The value is given in system clock cycles - ceil(divisor / 2).
+    // - Min deselect must be >= 50ns.  The value is given in system clock cycles - ceil(divisor / 2).
     const int clock_period_fs = 1000000000000000ll / clock_hz;
     const int maxSelect = (125 * 1000000) / clock_period_fs;  // 125 = 8000ns / 64
-    const int minDeselect = (18 * 1000000 + (clock_period_fs - 1)) / clock_period_fs - (clockDivider + 1) / 2;
+    int minDeselect = (50 * 1000000 + (clock_period_fs - 1)) / clock_period_fs - (clockDivider + 1) / 2;
+    if (minDeselect < 0)
+    {
+        minDeselect = 0;
+    }
 
-    stdio_printf("Max Select: %d, Min Deselect: %d, clock divider: %d\n", maxSelect, minDeselect, clockDivider);
+    stdio_printf("Max Select: %d, Min Deselect: %d, clock divider: %d, PSRAM clock: %d Hz\n",
+                 maxSelect, minDeselect, clockDivider, clock_hz / clockDivider);
 
     uint32_t intr_stash = save_and_disable_interrupts();
 
@@ -65,16 +88,18 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
     qmi_hw->direct_csr = 30 << QMI_DIRECT_CSR_CLKDIV_LSB | QMI_DIRECT_CSR_EN_BITS;
 
     // direct-mode operation
-    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0)
+    if (!qmi_wait_for_bits(QMI_DIRECT_CSR_BUSY_BITS, 0u))
     {
+        goto psram_qmi_timeout;
     }
 
     // Exit out of QMI in case we've inited already
     qmi_hw->direct_csr |= QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
     // Turn off quad.
     qmi_hw->direct_tx = QMI_DIRECT_TX_OE_BITS | (QMI_DIRECT_TX_IWIDTH_VALUE_Q << QMI_DIRECT_TX_IWIDTH_LSB) | PSRAM_CMD_QUAD_END;
-    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0)
+    if (!qmi_wait_for_bits(QMI_DIRECT_CSR_BUSY_BITS, 0u))
     {
+        goto psram_qmi_timeout;
     }
     (void)qmi_hw->direct_rx;
     qmi_hw->direct_csr &= ~(QMI_DIRECT_CSR_ASSERT_CS1N_BITS);
@@ -93,11 +118,13 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
         {
             qmi_hw->direct_tx = PSRAM_CMD_NOOP;
         }
-        while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS) == 0)
+        if (!qmi_wait_for_bits(QMI_DIRECT_CSR_TXEMPTY_BITS, QMI_DIRECT_CSR_TXEMPTY_BITS))
         {
+            goto psram_qmi_timeout;
         }
-        while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0)
+        if (!qmi_wait_for_bits(QMI_DIRECT_CSR_BUSY_BITS, 0u))
         {
+            goto psram_qmi_timeout;
         }
         if (i == 5)
         {
@@ -128,8 +155,9 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
     qmi_hw->direct_csr = (30 << QMI_DIRECT_CSR_CLKDIV_LSB) | QMI_DIRECT_CSR_EN_BITS;
     
     // direct-mode operation
-    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0)
+    if (!qmi_wait_for_bits(QMI_DIRECT_CSR_BUSY_BITS, 0u))
     {
+        goto psram_qmi_timeout;
     }
 
     // RESETEN, RESET and quad enable
@@ -152,8 +180,9 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
         {
             qmi_hw->direct_tx = PSRAM_CMD_LINEAR_TOGGLE;
         }
-        while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0)
+        if (!qmi_wait_for_bits(QMI_DIRECT_CSR_BUSY_BITS, 0u))
         {
+            goto psram_qmi_timeout;
         }
         qmi_hw->direct_csr &= ~(QMI_DIRECT_CSR_ASSERT_CS1N_BITS);
         for (size_t j = 0; j < 20; j++)
@@ -212,6 +241,12 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
     restore_interrupts(intr_stash);
     printf("PSRAM ID: %x %x\n", kgd, eid);
     return psram_size;
+
+psram_qmi_timeout:
+    qmi_hw->direct_csr &= ~(QMI_DIRECT_CSR_ASSERT_CS1N_BITS | QMI_DIRECT_CSR_EN_BITS);
+    restore_interrupts(intr_stash);
+    printf("Timed out waiting for PSRAM QMI direct mode\n");
+    return 0u;
 }
 
 //-------------------------------------------------------------------------------
@@ -224,8 +259,8 @@ static size_t __no_inline_not_in_flash_func(setup_psram)(uint psram_cs_pin)
 // Internal function that init's the allocator
 static bool rp_pico_alloc_init()
 {
-   if (_bInitialized)
-        return true;
+    if (_bInitialized)
+        return _mem_heap != NULL;
 
     _mem_heap = NULL;
     _mem_sram_pool = NULL;
@@ -242,18 +277,15 @@ static bool rp_pico_alloc_init()
     printf("PSRAM size: %u\n", _psram_size);
     if (!_bUseHeapPool)
     {
-        printf("Got here A!\n");
-
         if (_psram_size > 0)
         {
             _mem_heap = tlsf_create_with_pool((void *)PSRAM_LOCATION, _psram_size, 64 * 1024 * 1024);
-            _mem_psram_pool = tlsf_get_pool(_mem_heap);
+            if (_mem_heap != NULL)
+                _mem_psram_pool = tlsf_get_pool(_mem_heap);
         }
     }
     else
     {
-
-        printf("Got here B!\n");
 
         // First, sram pool. External heap symbols from rpi pico-sdk
         extern uint32_t __heap_start;
@@ -263,11 +295,22 @@ static bool rp_pico_alloc_init()
         // printf("point 2 start: %x, end %x, size %X %u\n", &__heap_start, &__heap_end, sram_size, sram_size);
 
         _mem_heap = tlsf_create_with_pool((void *)&__heap_start, sram_size, 64 * 1024 * 1024);
+        if (_mem_heap == NULL)
+        {
+            printf("Unable to initialize the SRAM allocator pool\n");
+            return false;
+        }
         _mem_sram_pool = tlsf_get_pool(_mem_heap);
 
         if (_psram_size > 0)
             _mem_psram_pool = tlsf_add_pool(_mem_heap, (void *)PSRAM_LOCATION, _psram_size);
     }
+    if (_mem_heap == NULL)
+    {
+        printf("Unable to initialize an allocator pool; PSRAM is unavailable\n");
+        return false;
+    }
+
     _bInitialized = true;
     return true;
 }
@@ -284,6 +327,8 @@ void *rp_mem_malloc(size_t size)
 
 void rp_mem_free(void *ptr)
 {
+    if (ptr == NULL)
+        return;
     if (!rp_pico_alloc_init())
         return;
     tlsf_free(_mem_heap, ptr);
@@ -300,9 +345,12 @@ void *rp_mem_calloc(size_t num, size_t size)
 {
     if (!rp_pico_alloc_init())
         return NULL;
-    void *ptr = tlsf_malloc(_mem_heap, num * size);
+    if (num != 0u && size > SIZE_MAX / num)
+        return NULL;
+    const size_t total = num * size;
+    void *ptr = tlsf_malloc(_mem_heap, total);
     if (ptr)
-        memset(ptr, 0, num * size);
+        memset(ptr, 0, total);
     return ptr;
 }
 
@@ -321,7 +369,8 @@ size_t rp_mem_max_free_size(void)
     if (!rp_pico_alloc_init())
         return 0;
     size_t max_free = 0;
-    tlsf_walk_pool(_mem_sram_pool, max_free_walker, &max_free);
+    if (_mem_sram_pool)
+        tlsf_walk_pool(_mem_sram_pool, max_free_walker, &max_free);
     if (_mem_psram_pool)
         tlsf_walk_pool(_mem_psram_pool, max_free_walker, &max_free);
 

@@ -29,6 +29,7 @@
 #ifndef _DEV_CONFIG_H_
 #define _DEV_CONFIG_H_
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "pico/stdlib.h"
@@ -88,10 +89,10 @@ void DEV_SPI_Write_nByte(uint8_t *pData, uint32_t Len);
 void DEV_Delay_ms(UDOUBLE xms);
 void DEV_Delay_us(UDOUBLE xus);
 
-void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value);
-void DEV_I2C_Write_nByte(uint8_t addr, uint8_t *pData, uint32_t Len);
-uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg);
-void DEV_I2C_Read_nByte(uint8_t addr,uint8_t reg, uint8_t *pData, uint32_t Len);
+bool DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value);
+bool DEV_I2C_Write_nByte(uint8_t addr, const uint8_t *pData, uint32_t Len);
+bool DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg, uint8_t *Value);
+bool DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData, uint32_t Len);
 
 void DEV_IRQ_SET(uint gpio, uint32_t events, gpio_irq_callback_t callback);
 

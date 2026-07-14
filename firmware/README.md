@@ -2,7 +2,7 @@
 
 This directory contains firmware for the Waveshare RP2350 Touch AMOLED 2.41 board. The firmware owns panel initialization, the 450×600 RGB565 framebuffer, PSRAM allocation, touch sampling, USB transport, device text, the resource cache, and the board RTC interface.
 
-The current firmware release is **1.2.16**. It exposes the display through USB protocol **16**. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
+The current firmware development version is **1.2.17.dev0**. It exposes the display through USB protocol **16**. Use host and firmware artifacts from the same release or checkout. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
 
 ## Build requirements
 
@@ -50,11 +50,22 @@ Run the full host-to-device validation from the repository root after flashing:
 --clean             Recreate the selected build directory
 --debug             Configure a Debug build
 --clock-khz VALUE   RP2350 system clock in kHz
+--psram-max-sck-hz VALUE
+                    Maximum requested PSRAM serial clock in Hz
 --vid VALUE         USB vendor ID C literal
 --pid VALUE         USB product ID C literal
 ```
 
-The default clock is 250 MHz. It is an overclock. Test panel output, touch, USB, PSRAM behavior, and temperature after changing this value or using a different board.
+The default performance profile uses a 250 MHz RP2350 system clock and a 133 MHz maximum requested PSRAM serial clock. The PSRAM divider produces an actual serial clock of about 125 MHz at that system clock. If a particular board shows instability, use the conservative profile without changing source:
+
+```bash
+./scripts/build.sh --clean \
+  --clock-khz 150000 \
+  --psram-max-sck-hz 109000000 \
+  --sdk /path/to/pico-sdk
+```
+
+The accepted system-clock range is 120–250 MHz. Test panel output, touch, USB, and PSRAM behavior after changing either value or using a different board. Record both values with hardware test results.
 
 The default USB identity is `0xCAFE:0x4010` for development. Replace it with an appropriate assigned identity before distributing hardware, then update `../python/udev/60-rp2350-remote-display.rules` to match.
 

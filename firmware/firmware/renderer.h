@@ -11,7 +11,7 @@ void renderer_clear(uint16_t rgb565);
 void renderer_show_waiting_screen(void);
 void renderer_fill_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t rgb565);
 void renderer_stroke_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t rgb565, uint8_t thickness);
-void renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t rgb565, uint8_t thickness);
+bool renderer_line(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1, uint16_t rgb565, uint8_t thickness);
 bool renderer_copy_rect(uint16_t source_x, uint16_t source_y, uint16_t width, uint16_t height,
                         uint16_t destination_x, uint16_t destination_y);
 bool renderer_scroll_rect(uint16_t x, uint16_t y, uint16_t width, uint16_t height,

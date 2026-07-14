@@ -3,9 +3,9 @@
 This project includes source from multiple origins.
 
 - `firmware/`, project CMake files, scripts, and project documentation are original project material under the MIT License in [LICENSE](LICENSE).
-- `drivers/waveshare/` derives from Waveshare board support source and retains its MIT permission notices in the source files.
+- `drivers/waveshare/` derives from Waveshare board support source and retains its MIT permission notices in the source files. `drivers/waveshare/qspi/qspi.pio` is derived from the Waveshare Team RP2350 Touch AMOLED board support dated 2025-03-20; the corresponding MIT permission text is retained in adjacent `drivers/waveshare/qspi/qspi_pio.c`.
 - `drivers/psram/tlsf/` is TLSF by Matthew Conte under BSD-3-Clause. Its source retains SPDX identifiers and its license is reproduced in [LICENSES/BSD-3-Clause-TLSF.txt](LICENSES/BSD-3-Clause-TLSF.txt).
-- `pico_sdk_import.cmake` originates from the Raspberry Pi Pico SDK and retains its BSD-3-Clause notice in the file header. The Raspberry Pi Pico SDK itself is not bundled.
+- `pico_sdk_import.cmake` and the adapted `boards/waveshare_rp2350_touch_amoled_2.41.h` board header originate from Raspberry Pi Pico SDK material and retain BSD-3-Clause notices in their file headers. The Raspberry Pi Pico SDK itself is not bundled.
 
 ## Built-in GNU Unifont asset
 
