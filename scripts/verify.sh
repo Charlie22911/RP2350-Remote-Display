@@ -30,7 +30,9 @@ if command -v gcc >/dev/null 2>&1; then
     FONT_ASM="$(mktemp --suffix=.S)"
     RTC_HARNESS="$REPOSITORY_DIR/firmware/tests/rtc_pcf85063_harness.c"
     RTC_HARNESS_BIN="$(mktemp)"
-    trap 'rm -f "$RENDERER_HARNESS_BIN" "$FONT_HARNESS_BIN" "$RTC_HARNESS_BIN" "$FONT_ASM"' EXIT
+    USB_DESCRIPTOR_HARNESS="$REPOSITORY_DIR/firmware/tests/usb_descriptors_harness.c"
+    USB_DESCRIPTOR_HARNESS_BIN="$(mktemp)"
+    trap 'rm -f "$RENDERER_HARNESS_BIN" "$FONT_HARNESS_BIN" "$RTC_HARNESS_BIN" "$USB_DESCRIPTOR_HARNESS_BIN" "$FONT_ASM"' EXIT
 
     gcc -std=c11 -Wall -Wextra -Werror \
         -I"$REPOSITORY_DIR/firmware/tests/mocks" \
@@ -55,4 +57,11 @@ if command -v gcc >/dev/null 2>&1; then
         "$RTC_HARNESS" \
         -o "$RTC_HARNESS_BIN"
     "$RTC_HARNESS_BIN"
+
+    gcc -std=c11 -Wall -Wextra -Werror \
+        -I"$REPOSITORY_DIR/firmware/tests/mocks" \
+        -I"$REPOSITORY_DIR/firmware/firmware" \
+        "$USB_DESCRIPTOR_HARNESS" \
+        -o "$USB_DESCRIPTOR_HARNESS_BIN"
+    "$USB_DESCRIPTOR_HARNESS_BIN"
 fi

@@ -1,19 +1,20 @@
 # Python library
 
-`rp2350-remote-display` is the Linux host library for RP2350 Remote Display. It opens the board over USB, checks protocol compatibility, sends drawing commands, receives touch events, and provides helpers for images, text, caching, dirty updates, layout, diagnostics, and RTC access. Windows 11 users can run this Linux host through the documented experimental WSL 2 USB-forwarding path.
+`rp2350-remote-display` is the Linux and Windows host library for RP2350 Remote Display. It opens the board over USB, checks protocol compatibility, sends drawing commands, receives touch events, and provides helpers for images, text, caching, dirty updates, layout, diagnostics, and RTC access. One firmware image supports both host operating systems.
 
-This checkout is development version **1.2.17.dev0** of the project and Python library. Use firmware from the same release or checkout; both sides speak USB **protocol 16**.
+This checkout is development version **1.2.18.dev0** of the project and Python library. Use firmware from the same release or checkout; both sides speak USB **protocol 16**.
 
 ## Requirements
 
 - Python 3.10 through 3.14.
 - A board running compatible firmware.
-- PyUSB and a system libusb backend.
-- Linux USB permission to claim the vendor interface.
+- Linux, or 64-bit x86 Windows 11 (AMD64).
+- PyUSB and a libusb backend. Linux uses the system libusb library; installation on Windows AMD64 brings in `libusb-package` automatically.
+- Linux USB permission to claim the vendor interface, or the automatically selected Windows WinUSB driver.
 
-Direct USB hosting is supported on Linux. On Windows 11, native BOOTSEL flashing works without this package, while the host application currently runs through experimental WSL 2 forwarding. Native WinUSB setup is not supported. See the [Windows 11 guide](../docs/windows-11.md).
+Native Windows hosting requires firmware from the 1.2.18 development line or a later compatible release. That firmware publishes Microsoft OS descriptors so Windows selects its inbox WinUSB driver without Zadig or a custom INF. Windows ARM64 is not currently supported by the packaged backend. WSL 2 remains an alternative, but Windows and WSL cannot own the same display simultaneously. See the [Windows 11 guide](../docs/windows-11.md).
 
-## Install from this repository
+## Install from this repository on Linux
 
 From the repository root:
 
@@ -38,6 +39,25 @@ Install Linux USB access rules once per host:
 ```
 
 Log out and back in, then reconnect the board. The default development firmware uses `CAFE:4010`.
+
+## Install from this repository on Windows
+
+Open PowerShell in the repository root. Activation is optional when commands use the virtual environment's interpreter directly:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .\python
+```
+
+For development dependencies and tests:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".\python[dev]"
+.\.venv\Scripts\python.exe -m pytest .\python\tests
+```
+
+The package's Windows AMD64 dependency supplies the libusb runtime used by PyUSB. The matching firmware supplies descriptors that select Microsoft's WinUSB device driver. Neither requires a manual driver-association tool. Reconnect the board after flashing compatible firmware, keep it detached from WSL, and run the [minimal application](#minimal-application) with `.\.venv\Scripts\python.exe your_script.py`.
 
 ## Minimal application
 
@@ -84,11 +104,11 @@ A protocol error, transport failure, frame abort, or uncertain reply invalidates
 
 Synchronous replies and errors are matched to their request sequence; delayed replies from timed-out requests are discarded. `ping()` accepts at most 64 payload bytes. Lines and polylines are clipped to the canvas, accept thickness up to 32 pixels, and reject a command whose clipped raster work would exceed 1,000,000 pixel-write attempts.
 
-Firmware exposes a stable serial derived from the RP2350 board identity. When more than one board is attached, select one with `RemoteDisplay.open(serial_number="...")`; Linux callers may also use `bus=` and `address=` for the current USB attachment. Bus and address can change after reconnecting, so prefer the serial for persistent configuration.
+Firmware exposes a stable serial derived from the RP2350 board identity. When more than one board is attached, select one with `RemoteDisplay.open(serial_number="...")`; callers may also use `bus=` and `address=` for the current USB attachment when the backend reports them. Bus and address can change after reconnecting, so prefer the serial for persistent configuration.
 
 ## Rendering terminology
 
-The **host** is the Linux computer running this Python library. The **Pico** is the RP2350 board and the firmware running on it. The distinction matters because both machines can participate in producing a visible screen.
+The **host** is the Linux or Windows computer running this Python library. The **Pico** is the RP2350 board and the firmware running on it. The distinction matters because both machines can participate in producing a visible screen.
 
 - **Host rendering** means Python generates final image pixels or an Alpha8 text mask, then transfers those pixels to the Pico. `draw_image()`, `draw_text()`, `Canvas`, and `DirtyTilePresenter` use host rendering. The Pico writes the received pixels into its framebuffer.
 - **Pico rendering** means Python sends compact drawing commands and the Pico firmware produces the pixels locally. `clear()`, `fill_rect()`, `stroke_rect()`, `line()`, `polyline()`, `draw_device_text()`, `draw_cached()`, `copy_rect()`, and `scroll_rect()` use Pico rendering.
@@ -138,7 +158,7 @@ Query `device_font_info()` and `measure_device_text()` outside a frame before bu
 
 ## Pico-rendered dashboard
 
-`examples/dirty_dashboard.py` is a Linux system-monitor example that uses **Pico rendering** almost exclusively. The host samples metrics and calculates graph points; the Pico draws primitives and its resident 8×16 font into the framebuffer. It uses touch hitboxes, bounded text-clear rectangles, and `scroll_rect()` for graph updates. Static panel walls and labels remain in the framebuffer; ordinary updates send only changed text, graph movement, and new trace segments.
+`examples/dirty_dashboard.py` is a Linux-only system-monitor example that uses **Pico rendering** almost exclusively. The host samples metrics and calculates graph points; the Pico draws primitives and its resident 8×16 font into the framebuffer. It uses touch hitboxes, bounded text-clear rectangles, and `scroll_rect()` for graph updates. Static panel walls and labels remain in the framebuffer; ordinary updates send only changed text, graph movement, and new trace segments.
 
 At startup, the terminal menu selects the network interface, disk, target update rate from 1 through 15 FPS, and a 10 through 60 second history window. While it is running, type `m` and press Enter to reopen settings, `s` to print the active monitor settings, or `q` to exit. Tap a card for its fullscreen graph and tap the right-aligned Back button to return. Disk temperature is shown only when `smartctl` can retrieve it.
 
@@ -157,7 +177,7 @@ Mirror these operations with `Canvas.copy_rect()` or `Canvas.scroll_rect()` when
 
 Touch events report panel coordinates with a top-left origin. The firmware coalesces move events so `poll_latest_touch()` is appropriate for drag feedback.
 
-RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenticated SNTP request from the host, writes the resulting UTC value to the board, and reads it back. By default it rejects samples more than 86,400 seconds from the host clock; set `max_offset_seconds=` to a smaller positive bound, or pass `None` only when deliberately disabling that plausibility check. It does not set the Linux system clock. Check `RtcReading.oscillator_valid` after a power-loss event.
+RTC values are timezone-aware UTC. `sync_rtc_from_ntp()` performs one unauthenticated SNTP request from the host, writes the resulting UTC value to the board, and reads it back. By default it rejects samples more than 86,400 seconds from the host clock; set `max_offset_seconds=` to a smaller positive bound, or pass `None` only when deliberately disabling that plausibility check. It does not set the host operating system clock. Check `RtcReading.oscillator_valid` after a power-loss event.
 
 ## Examples
 
@@ -168,13 +188,13 @@ Run examples from the repository root after activating the virtual environment. 
 | `examples/basic_primitives.py` | Draws a panel, border, accent bar, button, and **host-rendered** Alpha8 text with direct primitive commands. | Establishes the simplest frame workflow and shows that primitives can be Pico-rendered while `draw_text()` remains host-rendered. |
 | `examples/device_text.py` | Draws a compact status panel with `draw_device_text()` and the Pico's resident 8×16 font. | Shows the Pico-rendered text path, fixed cell geometry, and compact UTF-8 commands without Alpha8 mask transfers. |
 | `examples/graphics_modes.py` | Presents the same generated artwork with RGB565 RAW, RGB565 RLE, Palette4, and dithered Palette4. | Makes the bandwidth-versus-image-quality tradeoff visible instead of theoretical. |
-| `examples/plasma_interactive.py` | Animates a generated plasma effect and lets the operator compare full-resolution transfer with Scale2 and palette choices. | Measures actual host, USB, framebuffer, and panel performance on the connected system. Run `python python/examples/plasma_interactive.py`. |
-| `examples/dirty_dashboard.py` | Samples Linux CPU, memory, disk, and network metrics; the host calculates values and graph points while the Pico renders the UI, device text, touch navigation, and scrolling plots. | Reference implementation for an efficient live UI: static Pico-rendered layout once, bounded clears for changing text, and `scroll_rect()` for graph history. |
+| `examples/plasma_interactive.py` | Linux/WSL example that animates a generated plasma effect and lets the operator compare full-resolution transfer with Scale2 and palette choices; its controls currently require a POSIX terminal. | Measures actual host, USB, framebuffer, and panel performance on the connected system. Run `python python/examples/plasma_interactive.py`. |
+| `examples/dirty_dashboard.py` | Linux-only example that samples CPU, memory, disk, and network metrics; the host calculates values and graph points while the Pico renders the UI, device text, touch navigation, and scrolling plots. | Reference implementation for an efficient live UI: static Pico-rendered layout once, bounded clears for changing text, and `scroll_rect()` for graph history. |
 | `examples/resource_cache.py` | Uploads one RGB565 icon into the Pico resource cache, then replays it many times. | Shows when a repeated image should be transferred once and drawn locally thereafter. |
 | `examples/scrolling_log.py` | Draws Pico-rendered log lines, then scrolls the existing framebuffer region before adding the next line. | Demonstrates that moving existing Pico framebuffer pixels avoids retransmitting unchanged log content. |
 | `examples/touch_canvas.py` | Reads touch events and overlays a marker by composing a fresh **host-rendered** `Canvas` for each update. | Shows the contrasting dirty-tile path, where the host owns the full pixel model and `DirtyTilePresenter` transfers only changes. |
 | `examples/layout_debug.py` | Renders design-space coordinates, widget bounds, text boxes, chart helpers, and tile boundaries. | Helps validate coordinate transforms and inspect why a host-rendered or Pico-rendered layout lands where it does. |
-| `examples/rtc_sync.py` | Reads the board RTC or performs one host-side NTP query and writes the resulting UTC time to the board. | Keeps time synchronization explicit: it updates the Pico RTC, not the Linux system clock. Run `python python/examples/rtc_sync.py --help` for its options. |
+| `examples/rtc_sync.py` | Reads the board RTC or performs one host-side NTP query and writes the resulting UTC time to the board. | Keeps time synchronization explicit: it updates the Pico RTC, not the host operating system clock. Run `python python/examples/rtc_sync.py --help` for its options. |
 
 ## Related documentation
 

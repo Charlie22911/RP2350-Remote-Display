@@ -1,8 +1,9 @@
 ## Unreleased
 
-- Identifies post-1.2.16 development builds as `1.2.17.dev0` instead of reusing the published release version.
-- Adds Python 3.14 and Windows-safe package/unit-test coverage while retaining Linux as the supported direct-USB host.
-- Documents native Windows BOOTSEL flashing and the experimental WSL 2 USB-forwarding path.
+- Identifies post-1.2.16 development builds as `1.2.18.dev0` instead of reusing the published release version.
+- Adds native Windows 11 AMD64 hosting through the firmware's automatic WinUSB association and a conditional `libusb-package` backend dependency.
+- Uses the same firmware and USB display protocol on Linux and Windows while retaining WSL 2 as an optional, exclusively owned USB path.
+- Adds Python 3.14 and cross-platform package, unit-test, and preflight coverage, plus physical hardware validation on both supported hosts.
 - Preserves the 250 MHz system-clock and approximately 125 MHz PSRAM performance profile while exposing documented system-clock and PSRAM-ceiling build overrides.
 - Makes allocator startup null-safe, rejects allocation-size overflow, bounds PSRAM QMI waits, and starts watchdog coverage earlier in boot.
 - Clips line and polyline geometry before rendering and enforces thickness and raster-work budgets on both host and firmware.

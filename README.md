@@ -4,8 +4,8 @@ RP2350 Remote Display connects a host computer to a Waveshare RP2350 Touch AMOLE
 
 Two rendering terms are used consistently:
 
-- **Host rendering**: the Linux host creates the final pixels, then transfers RGB565, Alpha8, or palette image data to the Pico. `Canvas` and `DirtyTilePresenter` follow this path.
-- **Pico rendering**: the Linux host sends compact primitive, text, cache, copy, or scroll commands; the Pico firmware turns those commands into framebuffer pixels. The framebuffer persists between frames, but the Pico does not retain a reusable command list.
+- **Host rendering**: the host computer creates the final pixels, then transfers RGB565, Alpha8, or palette image data to the Pico. `Canvas` and `DirtyTilePresenter` follow this path.
+- **Pico rendering**: the host sends compact primitive, text, cache, copy, or scroll commands; the Pico firmware turns those commands into framebuffer pixels. The framebuffer persists between frames, but the Pico does not retain a reusable command list.
 
 The project includes firmware, a Python library, examples, and a hardware functional test.
 
@@ -15,23 +15,23 @@ The USB protocol version is the compatibility boundary. The host and firmware ex
 
 | Component | Current release or requirement |
 |---|---|
-| Project version | 1.2.17.dev0 (development) |
+| Project version | 1.2.18.dev0 (development) |
 | Latest release | [1.2.16](https://github.com/Charlie22911/RP2350-Remote-Display/releases/tag/1.2.16) |
 | Firmware/Python compatibility | Use matching versions from the same release or checkout |
 | USB protocol | 16 |
 | Board | Waveshare RP2350 Touch AMOLED 2.41 |
-| Host operating system | Linux; Windows 11 through WSL 2 is experimental |
+| Host operating system | Linux; Windows 11 on AMD64; WSL 2 is an alternative Windows path |
 | Python | 3.10 through 3.14 |
 
 The development firmware uses USB vendor ID `0xCAFE` and product ID `0x4010`. Use an assigned USB identity before distributing hardware.
 
 ## Quick start
 
-### Flash a release build
+### Flash firmware
 
 The quickest route does not require a firmware toolchain. Download the UF2 and its SHA-256 checksum from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases), verify the checksum, put the board in BOOTSEL mode, and copy the UF2 to its mounted boot volume.
 
-Windows 11 can perform this BOOTSEL copy directly. Running the host application on Windows currently requires the documented experimental WSL 2 USB-forwarding path; native WinUSB operation is not yet supported. See the [Windows 11 guide](docs/windows-11.md).
+Windows 11 can perform this BOOTSEL copy directly. Firmware from the 1.2.18 development line publishes Microsoft OS descriptors so Windows automatically binds its inbox WinUSB driver; no custom INF or driver-association tool is required. The same firmware image continues to work on Linux. Native Windows hosting also requires the Python package from this development line, or a future 1.2.18-or-newer release. See the [Windows 11 guide](docs/windows-11.md).
 
 ### Build from source on Linux
 
@@ -62,13 +62,25 @@ The default firmware uses a 250 MHz RP2350 system clock and a 133 MHz PSRAM seri
   --sdk "$HOME/src/pico-sdk"
 ```
 
+### Set up the host on Windows 11
+
+Native Windows support targets 64-bit x86 Windows 11 (AMD64). Installing the Python package also installs its packaged libusb backend dependency; the firmware's descriptors let Windows use that backend through WinUSB automatically. WSL 2 remains available, but Windows and WSL cannot own the same attached display at the same time.
+
+Use the step-by-step [Windows 11 guide](docs/windows-11.md) for source or wheel installation, driver verification, WSL ownership, and native hardware-test commands.
+
 ## First example
 
-After the bootstrap has completed and Linux USB access is active:
+After the Linux bootstrap has completed and USB access is active:
 
 ```bash
 source .venv/bin/activate
 python python/examples/basic_primitives.py
+```
+
+On native Windows, use the environment's Python executable from PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe .\python\examples\basic_primitives.py
 ```
 
 The display should show a simple panel and text. For a complete application example, see the [Python library guide](python/README.md).
@@ -79,7 +91,7 @@ The display should show a simple panel and text. For a complete application exam
 - [Protocol reference](docs/protocol.md): wire format, session rules, image transport, and capabilities.
 - [Testing guide](docs/testing.md): source verification and hardware validation.
 - [Troubleshooting](docs/troubleshooting.md): USB, build, rendering, test, and RTC issues.
-- [Windows 11 guide](docs/windows-11.md): native BOOTSEL flashing and experimental WSL 2 host setup.
+- [Windows 11 guide](docs/windows-11.md): native WinUSB setup, BOOTSEL flashing, hardware validation, and optional WSL 2 use.
 - [Release guide](docs/releasing.md): versioning, verification, artifacts, checksums, and provenance.
 - [Firmware guide](firmware/README.md): firmware build and board-level configuration.
 - [Python library guide](python/README.md): installation, API overview, and examples.
@@ -112,7 +124,6 @@ VERSION           Current project version used by firmware and package metadata
 - [ ] Add protocol trace capture and replay
 - [ ] Expand functional tests for new transports and displays
 - [ ] Document supported hardware, wiring, and firmware updates
-- [ ] Add native Windows WinUSB descriptors, discovery, and hardware validation
 
 ## License and notices
 

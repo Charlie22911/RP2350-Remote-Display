@@ -7,6 +7,7 @@ import types
 import unittest
 from unittest.mock import patch
 
+import rp2350_remote_display.display as display_module
 from rp2350_remote_display.display import (
     EVENT_QUEUE_LIMIT,
     LINE_MAX_WORK,
@@ -203,6 +204,48 @@ class SequenceAndRecoveryTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
+    def test_windows_backend_uses_the_packaged_libusb_runtime(self) -> None:
+        backend = object()
+        libusb_package = types.ModuleType("libusb_package")
+        libusb_package.get_libusb1_backend = lambda: backend
+
+        with (
+            patch.object(display_module.sys, "platform", "win32"),
+            patch.dict(sys.modules, {"libusb_package": libusb_package}),
+        ):
+            self.assertIs(display_module._windows_usb_backend(), backend)
+
+    def test_non_windows_backend_uses_pyusb_discovery(self) -> None:
+        with patch.object(display_module.sys, "platform", "linux"):
+            self.assertIsNone(display_module._windows_usb_backend())
+
+    def test_windows_backend_reports_a_missing_runtime(self) -> None:
+        with (
+            patch.object(display_module.sys, "platform", "win32"),
+            patch.dict(sys.modules, {"libusb_package": None}),
+            self.assertRaisesRegex(RuntimeError, "requires libusb-package"),
+        ):
+            display_module._windows_usb_backend()
+
+    def test_windows_backend_missing_runtime_names_architecture_boundary(self) -> None:
+        with (
+            patch.object(display_module.sys, "platform", "win32"),
+            patch.dict(sys.modules, {"libusb_package": None}),
+            self.assertRaisesRegex(RuntimeError, "Windows ARM64 is not currently supported"),
+        ):
+            display_module._windows_usb_backend()
+
+    def test_windows_backend_reports_a_loader_failure(self) -> None:
+        libusb_package = types.ModuleType("libusb_package")
+        libusb_package.get_libusb1_backend = lambda: None
+
+        with (
+            patch.object(display_module.sys, "platform", "win32"),
+            patch.dict(sys.modules, {"libusb_package": libusb_package}),
+            self.assertRaisesRegex(RuntimeError, "could not be loaded"),
+        ):
+            display_module._windows_usb_backend()
+
     def test_access_error_is_wrapped_and_invalidates_session(self) -> None:
         display = _display(output=_OutputEndpoint(error=PermissionError(errno.EACCES, "denied")))
         with self.assertRaises(RemoteDisplayAccessError):
@@ -266,9 +309,16 @@ class TransportTests(unittest.TestCase):
 
         device = Device()
         disposed: list[object] = []
+        find_options: dict[str, object] = {}
+        backend = object()
         core = types.ModuleType("usb.core")
         core.USBError = USBError
-        core.find = lambda **kwargs: [device]
+
+        def find(**kwargs):
+            find_options.update(kwargs)
+            return [device]
+
+        core.find = find
         util = types.ModuleType("usb.util")
         util.dispose_resources = lambda value: disposed.append(value)
         util.release_interface = lambda value, interface: None
@@ -277,10 +327,14 @@ class TransportTests(unittest.TestCase):
         usb.core = core
         usb.util = util
 
-        with patch.dict(sys.modules, {"usb": usb, "usb.core": core, "usb.util": util}):
+        with (
+            patch.dict(sys.modules, {"usb": usb, "usb.core": core, "usb.util": util}),
+            patch.object(display_module, "_windows_usb_backend", return_value=backend),
+        ):
             with self.assertRaises(RemoteDisplayError):
                 RemoteDisplay.open()
 
+        self.assertIs(find_options["backend"], backend)
         self.assertEqual(device.detached, [0])
         self.assertEqual(device.attached, [0])
         self.assertEqual(disposed, [device])

@@ -1,30 +1,106 @@
 # Windows 11 guide
 
-Windows 11 support is currently split into two paths:
+RP2350 Remote Display supports native USB hosting on 64-bit x86 Windows 11 (AMD64) with firmware and Python software from the 1.2.18 development line or a later compatible release. The firmware publishes Microsoft OS 2.0 descriptors, so Windows automatically associates the normal display interface with its inbox WinUSB driver. The Python package installs its packaged libusb backend dependency on Windows AMD64.
 
-- **Firmware flashing:** supported through the board's native BOOTSEL mass-storage mode.
-- **Python host application:** available as an experimental WSL 2 workflow using `usbipd-win` to forward the normal firmware USB device into Linux.
+No Zadig step, project-specific INF, or separate libusb DLL download is required. The same firmware image and display protocol continue to work on Linux.
 
-The project does not yet provide a supported native-Windows WinUSB driver setup. Windows CI runs hardware-independent Python tests plus package build and installation checks; it does not validate a physical board.
+Windows ARM64 is not currently a supported native host because the packaged backend dependency is limited to AMD64. WSL 2 remains an alternative for running the Linux setup, but native Windows and WSL cannot own the same attached display at the same time.
 
-## Flash a release UF2 from Windows
+## Choose a Windows host path
 
-1. Download the firmware UF2 and its checksum file from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases).
-2. In PowerShell, calculate the downloaded UF2 hash:
+| Path | Use it when | USB owner |
+|---|---|---|
+| Native Windows (recommended) | Running the Python library, examples, or physical functional test directly from PowerShell | Windows through WinUSB |
+| WSL 2 | Using the Linux bootstrap, Linux-only examples, or a Linux development environment | The selected WSL instance through `usbipd-win` |
+
+BOOTSEL flashing is separate from both host paths. Windows mounts the board's ROM bootloader as a removable drive, regardless of which operating system will later run the host application.
+
+## Flash compatible firmware
+
+1. Obtain `rp2350_remote_display.uf2` from the same 1.2.18-line checkout or release as the Python package. A release download should include a published SHA-256 value; a locally built development artifact will not have a publisher-provided value. Firmware from 1.2.16 and earlier does not advertise WinUSB automatically.
+2. In PowerShell, calculate the downloaded file's hash:
 
    ```powershell
    Get-FileHash .\rp2350_remote_display.uf2 -Algorithm SHA256
    ```
 
-3. Compare the displayed hash with the SHA-256 value published beside that release.
+3. For a release download, compare the entire displayed hash with the published value. For a local development build, record the calculated hash with the test results.
 4. Hold the board's BOOTSEL button while connecting or resetting it. Windows should mount a removable boot volume.
 5. Copy the UF2 to that volume. The volume disconnects automatically when flashing completes and the board reboots into the normal display firmware.
 
-The normal firmware USB interface is different from the BOOTSEL mass-storage device. A board showing `WAITING FOR HOST` has left BOOTSEL mode successfully.
+BOOTSEL mode and normal display mode are different USB devices. A board showing `WAITING FOR HOST` has left BOOTSEL mode and is ready for a host application.
 
-## Run the host through WSL 2
+## Install the native Windows host
 
-This route keeps the project's Linux setup and libusb behavior while using a Windows 11 computer. It requires a current WSL 2 distribution and `usbipd-win`. Microsoft maintains the authoritative [WSL USB connection instructions](https://learn.microsoft.com/windows/wsl/connect-usb); follow them if command syntax differs from the summary below.
+Clone or download the matching repository checkout, open PowerShell in its root directory, and create a virtual environment:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .\python
+.\.venv\Scripts\python.exe -m pip check
+```
+
+The package installation brings in PyUSB, Pillow, and `libusb-package`. The `libusb-package` dependency supplies the libusb runtime that PyUSB uses with WinUSB; it does not replace the Windows device driver.
+
+For a published release, install the downloaded wheel instead of the editable source directory:
+
+```powershell
+$wheel = Get-ChildItem .\rp2350_remote_display-*.whl | Select-Object -First 1
+.\.venv\Scripts\python.exe -m pip install $wheel.FullName
+```
+
+Keep firmware and Python artifacts on matching project versions. Protocol 16 must match exactly even though the USB driver association happens before the display protocol starts.
+
+## Verify the automatic WinUSB association
+
+After flashing and reconnecting compatible firmware, open Device Manager and inspect the normal RP2350 Remote Display device:
+
+1. Open the device's **Properties** dialog.
+2. On the **Driver** page, confirm that Microsoft is the provider and that **Driver Details** lists `WinUSB.sys`.
+3. If the board was attached to WSL, detach it before testing native access.
+
+Do not manually replace the driver with Zadig or a custom INF. If Windows previously saw older firmware, flash the matching 1.2.18-line UF2, allow the board to reboot, and physically reconnect it so Windows enumerates the new descriptors.
+
+The firmware's stable per-board USB serial supports deterministic selection when several displays are connected. The development USB identity is `CAFE:4010`; custom firmware may use another VID/PID, which the host application must select explicitly.
+
+## Run an example natively
+
+If `usbipd-win` is installed, check whether the display is currently attached to WSL:
+
+```powershell
+usbipd list
+```
+
+If the display is attached, detach its listed bus ID:
+
+```powershell
+usbipd detach --busid <BUSID>
+```
+
+Then run a hardware-independent import check and a display example:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import rp2350_remote_display as rpd; print(rpd.__version__)"
+.\.venv\Scripts\python.exe .\python\examples\basic_primitives.py
+```
+
+The board should leave `WAITING FOR HOST` and display the example scene. Most examples work on either supported host. `dirty_dashboard.py` is Linux-specific because it reads Linux system metrics, and `plasma_interactive.py` currently requires POSIX terminal controls.
+
+## Run the physical functional test natively
+
+The PowerShell runner creates or reuses `.venv-windows`, installs the package from this checkout, and checks that its version matches the repository. Run the hardware-independent preflight before the full physical test:
+
+```powershell
+.\functional-test\run.ps1 --preflight-only
+.\functional-test\run.ps1 --report .\functional-test\reports\windows-native.json
+```
+
+Set `RPD_TEST_VENV` before invoking the runner if you want it to use another virtual-environment directory. The full test opens the board several times and includes interactive visual and touch stages. Close other applications using the display and keep it detached from WSL for the complete run. See the [testing guide](testing.md) for the validation classes and optional flags.
+
+## Use the WSL 2 alternative
+
+This path runs the Linux host software inside WSL 2. It requires a current WSL distribution and `usbipd-win`. Microsoft maintains the authoritative [WSL USB connection instructions](https://learn.microsoft.com/windows/wsl/connect-usb); follow them if command syntax differs from the summary below.
 
 Install or update WSL and `usbipd-win`, then reboot if Windows requests it:
 
@@ -40,13 +116,13 @@ usbipd list
 usbipd bind --busid <BUSID>
 ```
 
-In PowerShell, attach the shared device to WSL 2:
+Close every native application using the display. In PowerShell, attach the shared device to WSL 2:
 
 ```powershell
 usbipd attach --wsl --busid <BUSID>
 ```
 
-The attachment is not tied to that PowerShell window. Inside WSL, confirm that the development USB identity is visible:
+Inside WSL, confirm that the development USB identity is visible:
 
 ```bash
 lsusb -d cafe:4010
@@ -68,22 +144,16 @@ source .venv/bin/activate
 python python/examples/basic_primitives.py
 ```
 
-USB attachment is not persistent across every unplug, reset, or Windows restart. Run `usbipd list` and `usbipd attach --wsl --busid <BUSID>` again when the device is no longer visible in WSL. Detach it explicitly when needed:
+USB attachment is not persistent across every unplug, reset, or Windows restart. Run `usbipd list` and attach the current bus ID again when the device is no longer visible in WSL. Detach it before returning to native Windows:
 
 ```powershell
 usbipd detach --busid <BUSID>
 ```
 
-## Native-Windows limitation
+## Current boundaries
 
-The normal firmware presents a vendor-specific USB bulk interface. It does not currently publish Microsoft OS descriptors that automatically associate it with WinUSB, and the project does not install or validate a native libusb backend. A manual driver association can alter which Windows driver owns the device and is outside the supported setup.
-
-Native Windows host support should add and test all of the following together:
-
-- Microsoft OS 2.0 descriptors and an explicit device-interface identity.
-- A documented PyUSB/libusb backend installation and removal path.
-- Validation of the existing stable per-board USB serial and deterministic
-  multi-device selection through that native backend.
-- Physical connection, reconnect, error-recovery, and multiple-board tests on Windows.
-
-Until that work is complete, use native Windows only for BOOTSEL flashing and use WSL 2 for the Python host application.
+- Native hosting is supported on Windows 11 AMD64, not Windows ARM64.
+- The Bash firmware build helpers and Linux bootstrap are documented for Linux or WSL; native Windows support covers flashing, the Python host, cross-platform examples, and the physical functional test.
+- WinUSB association requires 1.2.18-line or later compatible firmware. Earlier firmware can still be used through Linux or WSL with its matching older host package, but it does not provide the supported native driver path.
+- One process and one operating-system environment can own a display interface at a time.
+- A custom firmware VID/PID must be passed to `RemoteDisplay.open()` or to the functional test's `--vid` and `--pid` options.

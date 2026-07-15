@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import math
 from pathlib import Path
 import struct
+import sys
 import time
 from typing import Iterable, Iterator, Sequence
 
@@ -196,6 +197,35 @@ def _transport_exception(action: str, error: BaseException) -> RemoteDisplayErro
     if _is_access_denied(error):
         return RemoteDisplayAccessError(f"USB access was denied while {action}: {error}")
     return RemoteDisplayTransportError(f"USB transport failed while {action}: {error}")
+
+
+def _windows_usb_backend():
+    """Return the packaged libusb backend used with the Windows WinUSB driver."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import libusb_package
+    except ImportError as exc:
+        raise RuntimeError(
+            "native Windows USB support requires libusb-package on AMD64/x64; Windows ARM64 is not "
+            "currently supported. On AMD64/x64, reinstall the host package dependencies"
+        ) from exc
+    backend = libusb_package.get_libusb1_backend()
+    if backend is None:
+        raise RuntimeError("the packaged Windows libusb backend could not be loaded")
+    return backend
+
+
+def _usb_access_guidance() -> str:
+    if sys.platform == "win32":
+        return (
+            "access to the RP2350 vendor interface was denied; close other applications using the display "
+            "and make sure usbipd has not attached it to WSL"
+        )
+    return (
+        "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
+        "and reconnect the board"
+    )
 
 
 def _is_transport_timeout(error: BaseException) -> bool:
@@ -452,10 +482,14 @@ class RemoteDisplay:
             raise RuntimeError("PyUSB is required. Install the host package dependencies.") from exc
 
         try:
-            devices = list(usb.core.find(find_all=True, idVendor=vid, idProduct=pid) or ())
+            find_options = {"find_all": True, "idVendor": vid, "idProduct": pid}
+            backend = _windows_usb_backend()
+            if backend is not None:
+                find_options["backend"] = backend
+            devices = list(usb.core.find(**find_options) or ())
         except usb.core.USBError as exc:
             if _is_access_denied(exc):
-                raise RemoteDisplayAccessError(f"access to USB devices was denied: {exc}") from exc
+                raise RemoteDisplayAccessError(f"{_usb_access_guidance()}: {exc}") from exc
             raise RemoteDisplayTransportError(f"could not enumerate USB devices: {exc}") from exc
         try:
             device = _select_usb_device(
@@ -484,10 +518,7 @@ class RemoteDisplay:
                 device.set_configuration()
             except usb.core.USBError as exc:
                 if _is_access_denied(exc):
-                    raise RemoteDisplayAccessError(
-                        "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
-                        "and reconnect the board"
-                    ) from exc
+                    raise RemoteDisplayAccessError(_usb_access_guidance()) from exc
                 raise RemoteDisplayTransportError(f"could not configure the USB device: {exc}") from exc
             try:
                 configuration = device.get_active_configuration()
@@ -518,10 +549,7 @@ class RemoteDisplay:
                 claimed_interface = interface.bInterfaceNumber
             except usb.core.USBError as exc:
                 if _is_access_denied(exc):
-                    raise RemoteDisplayAccessError(
-                        "access to the RP2350 vendor interface was denied; on Linux install the supplied udev rule "
-                        "and reconnect the board"
-                    ) from exc
+                    raise RemoteDisplayAccessError(_usb_access_guidance()) from exc
                 raise RemoteDisplayTransportError(f"could not claim the vendor interface: {exc}") from exc
         except BaseException:
             _cleanup_usb_device(

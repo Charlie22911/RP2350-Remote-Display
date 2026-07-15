@@ -14,6 +14,8 @@ For implementation-level definitions, use these files together with this guide:
 
 The firmware uses a USB vendor-bulk interface with one 64-byte IN endpoint and one 64-byte OUT endpoint. Protocol packets may span several USB transfers.
 
+The same USB interface and display protocol are used on Linux and Windows. Linux applications reach the interface through the system libusb library and the project's udev rule. On Windows 11, firmware from the 1.2.18 development line publishes a Microsoft OS 2.0 descriptor set containing the `WINUSB` compatible ID and project device-interface GUID `{70A0597B-D8E4-4580-8201-73B3B5E47581}`. Windows therefore selects its inbox WinUSB driver without a project-specific INF or manual driver association. These enumeration descriptors select the host driver; they do not change the display packet format or require separate firmware for Linux.
+
 Every packet begins with this 12-byte little-endian header:
 
 | Field | Size | Description |

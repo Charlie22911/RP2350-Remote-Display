@@ -2,7 +2,10 @@
 
 ## Unreleased
 
-- Tracks the `1.2.17.dev0` development package and stabilization work after the 1.2.16 release.
+- Tracks the `1.2.18.dev0` development package and stabilization work after the 1.2.16 release.
+- Supports physical native Windows validation through the packaged libusb backend while retaining the Linux runner and the same firmware image.
+- Adds a PowerShell setup/runner, Windows system-font fallbacks, and configurable `--vid` and `--pid` selection for native or custom-identity hardware runs.
+- Records the project version and tested USB identity in JSON reports.
 - Runs the complete hardware-independent verification set in continuous integration.
 
 ## 1.2.16
