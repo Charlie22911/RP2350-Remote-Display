@@ -6,25 +6,26 @@ RP2350 Remote Display turns the Waveshare RP2350 Touch AMOLED 2.41 board into a 
 
 The board has no application-specific shell or window system. Your host application owns the full display area.
 
+One firmware image supports both Linux and Windows. Linux uses its normal libusb path; Windows 11 reads the firmware's Microsoft OS descriptors and automatically associates the normal display interface with WinUSB.
+
 ## Hardware and host requirements
 
 Supported hardware:
 
 - Waveshare RP2350 Touch AMOLED 2.41 board.
-- USB connection between the Linux host and the board.
+- USB connection between the host computer and the board.
 - A method to enter BOOTSEL mode for firmware flashing.
 
 Supported host environment:
 
 - Linux for direct USB operation.
-- Windows 11 for native BOOTSEL flashing; experimental WSL 2 USB forwarding for the Linux host application.
+- 64-bit x86 Windows 11 (AMD64) for native WinUSB operation and BOOTSEL flashing.
+- WSL 2 as an optional alternative Windows host path.
 - Python 3.10 through 3.14 for the host library and examples.
 - CMake, an Arm embedded toolchain, and the Raspberry Pi Pico SDK when building firmware.
-- A libusb backend for PyUSB.
+- PyUSB with a libusb backend. Linux supplies libusb through the operating system; the Python package installs `libusb-package` automatically on Windows AMD64.
 
-The supplied bootstrap supports Debian, Ubuntu, Arch Linux, and CachyOS. Other distributions can use the package list printed by `./scripts/bootstrap-linux.sh --help` and the manual firmware instructions in [firmware/README.md](../firmware/README.md).
-
-Native Windows WinUSB operation is not yet supported. See the [Windows 11 guide](windows-11.md) for the supported flashing path, WSL 2 setup, and current limitations.
+The supplied bootstrap supports Debian, Ubuntu, Arch Linux, and CachyOS. Other distributions can use the package list printed by `./scripts/bootstrap-linux.sh --help` and the manual firmware instructions in [firmware/README.md](../firmware/README.md). Windows setup is covered separately in the [Windows 11 guide](windows-11.md).
 
 ## First-time setup
 
@@ -32,7 +33,7 @@ Native Windows WinUSB operation is not yet supported. See the [Windows 11 guide]
 
 Download the UF2 and checksum file from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases). Verify the SHA-256 value, put the board in BOOTSEL mode, and copy the UF2 to the mounted boot volume. This flashing path works directly on Windows 11 and Linux and does not require the Pico SDK.
 
-Use matching firmware and Python artifacts from the same release. Continue with the host setup below when the board shows `WAITING FOR HOST`.
+Use matching firmware and Python artifacts from the same release. Native Windows hosting requires firmware and host software from the 1.2.18 development line or a later compatible release; earlier published firmware does not advertise WinUSB automatically. Continue with the host setup below when the board shows `WAITING FOR HOST`.
 
 ### Build and set up on Linux
 
@@ -51,6 +52,20 @@ Pass an existing SDK path when you already have one:
 ```
 
 Run `./scripts/bootstrap-linux.sh --help` for options that skip individual setup steps.
+
+### Set up the native Windows host
+
+Clone or download this repository, open PowerShell in its root directory, and create a virtual environment:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e .\python
+```
+
+Installing the package on Windows AMD64 also installs the packaged libusb runtime used by PyUSB. No Zadig step, custom INF, or separate libusb DLL download is required. Flash matching 1.2.18-line firmware, reconnect the board, and Windows should select its inbox WinUSB driver automatically.
+
+Windows ARM64 is not currently a supported native host because the packaged backend dependency is limited to AMD64. WSL 2 remains an alternative, but a display attached to WSL is unavailable to native Windows applications until it is detached. See the [Windows 11 guide](windows-11.md) for driver checks and the complete WSL workflow.
 
 ### Flash the firmware
 
@@ -118,10 +133,16 @@ with RemoteDisplay.open() as display:
         display.draw_text("Hello, RP2350", 48, 62, WHITE, size=22)
 ```
 
-Run it with:
+On Linux, run it with:
 
 ```bash
 python hello_display.py
+```
+
+On native Windows, activation is optional; run the virtual environment's Python executable directly:
+
+```powershell
+.\.venv\Scripts\python.exe .\hello_display.py
 ```
 
 The public API is covered in [python/README.md](../python/README.md), including a guide to each complete example and the rendering path it demonstrates.
@@ -140,7 +161,7 @@ All rendering commands belong inside `with display.frame():`. Calls such as brig
 
 ### Rendering terminology
 
-The **host** is the Linux computer running the Python application. The **Pico** is the RP2350 board and its firmware.
+The **host** is the Linux or Windows computer running the Python application. The **Pico** is the RP2350 board and its firmware.
 
 - **Host rendering** means the host creates final pixels or an Alpha8 text mask and transfers them to the Pico. `Canvas`, `DirtyTilePresenter`, `draw_image()`, and `draw_text()` are host-rendering paths.
 - **Pico rendering** means the host sends commands and the Pico creates pixels in its framebuffer. Primitives, `draw_device_text()`, cached-resource replay, `copy_rect()`, and `scroll_rect()` are Pico-rendering paths.
@@ -162,7 +183,7 @@ The Pico retains framebuffer pixels after each frame, but it does not retain a c
 
 The full-resolution tile profiles are 18×24, 30×40, and 45×60 pixels. Smaller tiles limit redundant updates around a local change. Larger tiles reduce command overhead for broad changes.
 
-The included `python/examples/dirty_dashboard.py` uses the Pico-rendered live-UI path. The host samples Linux metrics and calculates graph points. The Pico draws the static frame once, updates only named text rectangles, and scrolls graph interiors inside the existing framebuffer. Its geometry constants are the shared contract for drawing, clearing, scrolling, and touch hit testing.
+The included Linux-specific `python/examples/dirty_dashboard.py` uses the Pico-rendered live-UI path. The host samples Linux metrics and calculates graph points. The Pico draws the static frame once, updates only named text rectangles, and scrolls graph interiors inside the existing framebuffer. Its geometry constants are the shared contract for drawing, clearing, scrolling, and touch hit testing.
 
 
 ### Scale2 rendering
@@ -179,7 +200,7 @@ Scale2 reduces source pixels and transport data, but it does not guarantee a pro
 
 Touch input is delivered as asynchronous events. Use `poll_events()`, `poll_latest_touch()`, or `wait_for_touch()` from the Python library. Move events are coalesced so interactive applications can use the most recent contact position efficiently.
 
-The board RTC stores UTC calendar values. `read_rtc()` returns its current state. `set_rtc()` writes a timezone-aware value. `sync_rtc_from_ntp()` asks an NTP server from the Linux host, writes the resulting UTC time to the board, and reads it back. RTC synchronization does not change the host operating system clock.
+The board RTC stores UTC calendar values. `read_rtc()` returns its current state. `set_rtc()` writes a timezone-aware value. `sync_rtc_from_ntp()` asks an NTP server from the host computer, writes the resulting UTC time to the board, and reads it back. RTC synchronization does not change the host operating system clock.
 
 The RTC clock can be invalid after power loss. Check `RtcReading.oscillator_valid` before trusting a reading.
 

@@ -1,6 +1,6 @@
 # Troubleshooting
 
-## The board is not found
+## The board is not found on Linux
 
 Confirm that the board has normal firmware, is connected by USB, and has rebooted after leaving BOOTSEL mode:
 
@@ -20,15 +20,37 @@ Install the supplied rule, log out and back in, then reconnect the board:
 
 The command adds the selected user to the `rp2350-display` group. A newly added group does not apply to an existing login session.
 
-## Windows cannot open the normal firmware device
+## The board is not found on native Windows
 
-Native Windows host operation is not currently supported. The vendor-specific normal-firmware interface does not automatically bind to WinUSB, and the project does not install or validate a native libusb backend. Do not confuse this with BOOTSEL mode, which appears as a normal removable drive and can be used directly from Windows.
+Native Windows hosting requires all of the following:
 
-Use the experimental WSL 2 forwarding workflow in the [Windows 11 guide](windows-11.md). If the device disappears after a reset or unplug, run `usbipd list` and attach its current bus ID again.
+- 64-bit x86 Windows 11 (AMD64).
+- Firmware from the 1.2.18 development line or a later compatible release.
+- A matching Python package installation, which brings in `libusb-package` on Windows AMD64.
+
+BOOTSEL mode and normal display mode are different USB devices. The BOOTSEL device appears as a removable drive; the normal firmware shows `WAITING FOR HOST` and should use Microsoft's WinUSB driver. In Device Manager, open the normal device's properties, confirm that the driver provider is Microsoft, and check that **Driver Details** lists `WinUSB.sys`. Do not use Zadig or install a custom INF for compatible firmware.
+
+If older firmware was previously attached, flash matching 1.2.18-line firmware, let the board reboot, and physically reconnect it so Windows enumerates the new descriptors. If the device is attached to WSL, detach it before opening it natively:
+
+```powershell
+usbipd list
+usbipd detach --busid <BUSID>
+```
+
+Close other applications that may have the display open. Windows and WSL cannot own the interface simultaneously. See the [Windows 11 guide](windows-11.md) for the complete native and WSL workflows.
 
 ## PyUSB cannot find a backend
 
-Install the system libusb package. The bootstrap installs it on supported distributions. On another Linux distribution, install the package that provides the libusb-1.0 shared library and restart the Python environment.
+On Linux, install the system libusb package. The bootstrap installs it on supported distributions. On another Linux distribution, install the package that provides the libusb-1.0 shared library and restart the Python environment.
+
+On Windows AMD64, reinstall the project package dependencies and verify the packaged backend is present:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade -e .\python
+.\.venv\Scripts\python.exe -m pip show libusb-package
+```
+
+The native backend is not currently packaged for Windows ARM64. A missing or unloaded backend is a Python installation problem; replacing the automatically selected WinUSB device driver is not the remedy.
 
 ## Connection fails with a protocol mismatch
 
@@ -83,9 +105,17 @@ PY
 
 The module path should point into the repository being tested. Remove the project-local `.venv` and rerun the test setup if the environment came from a different checkout.
 
+On Windows, inspect the same values with:
+
+```powershell
+.\.venv-windows\Scripts\python.exe -c "import rp2350_remote_display as rpd; print(rpd.__version__); print(rpd.__file__)"
+```
+
+`run.ps1` uses `.venv-windows` by default. If `RPD_TEST_VENV` is set, run the check with the Python executable from that directory instead.
+
 ## Functional-test text layout differs
 
-The test expects DejaVu Sans from normal Linux font locations. The bootstrap installs it on supported distributions. Install the distribution's DejaVu font package and rebuild the local environment when a text-layout preflight fails.
+On Linux, the test prefers DejaVu Sans from normal system font locations; the bootstrap installs it on supported distributions. Install the distribution's DejaVu font package and rebuild the local environment when a text-layout preflight fails. On Windows, the test also checks Segoe UI and Arial from the Windows Fonts directory. A customized or incomplete font installation can still change text metrics, so review the selected system fonts when preflight fails.
 
 ## The firmware is unstable at the default clock
 
@@ -102,4 +132,4 @@ The default build intentionally uses a 250 MHz RP2350 system clock and a 133 MHz
 
 RTC support appears only when the PCF85063 responds during firmware startup. Read `RtcReading.oscillator_valid` before trusting the value. A false value can follow loss of valid RTC power. Set the clock from a trusted UTC source with `set_rtc()` or `sync_rtc_from_ntp()`, then read it back.
 
-RTC synchronization changes the board clock only. It does not update the Linux system clock.
+RTC synchronization changes the board clock only. It does not update the Linux or Windows system clock.

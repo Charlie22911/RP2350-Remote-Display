@@ -40,6 +40,13 @@ jobs:
         run: python -m pip install --disable-pip-version-check -e "./python[dev]"
       - name: Run unit tests
         run: python -m pytest python/tests
+      - name: Run native Windows functional-test preflight
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          PYTHON: python
+          RPD_TEST_VENV: ${{ runner.temp }}\rpd-functional-test-venv
+        run: ./functional-test/run.ps1 --preflight-only
 
   source-verification:
     name: Complete source verification
@@ -88,6 +95,9 @@ jobs:
           python -c "import glob, subprocess, sys; wheels = glob.glob('dist/*.whl'); assert len(wheels) == 1, wheels; subprocess.check_call([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check', '--force-reinstall', wheels[0]])"
           python -m pip check
           python -c "import pathlib, rp2350_remote_display as rpd; expected = pathlib.Path('VERSION').read_text().strip(); assert rpd.__version__ == expected, (rpd.__version__, expected)"
+      - name: Load packaged native Windows USB backend
+        if: runner.os == 'Windows'
+        run: python -c "from rp2350_remote_display.display import _windows_usb_backend; assert _windows_usb_backend() is not None"
       - name: Upload Python distributions
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

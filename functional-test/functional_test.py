@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import statistics
 import struct
@@ -25,6 +26,8 @@ from PIL import Image, ImageDraw, ImageFont
 from rp2350_remote_display import (
     Canvas,
     CoordinateSpace,
+    DEFAULT_PID,
+    DEFAULT_VID,
     DebugOverlay,
     DirtyTilePresenter,
     Layout,
@@ -127,6 +130,8 @@ class StageResult:
 class Report:
     project_version: str = PROJECT_VERSION
     library_protocol: int = PROTOCOL_VERSION
+    usb_vid: int = DEFAULT_VID
+    usb_pid: int = DEFAULT_PID
     started_utc: str = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     stages: list[StageResult] = field(default_factory=list)
 
@@ -167,6 +172,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--touch-fps", type=float, default=60.0, help="Maximum host presentation rate during touch feedback.")
     parser.add_argument("--brightness", type=int, default=70, help="Brightness restored before completion.")
     parser.add_argument("--report", type=Path, default=None, help="Write a JSON report to this path.")
+    parser.add_argument("--vid", type=lambda value: int(value, 0), default=DEFAULT_VID, help="USB vendor ID (decimal or 0x-prefixed).")
+    parser.add_argument("--pid", type=lambda value: int(value, 0), default=DEFAULT_PID, help="USB product ID (decimal or 0x-prefixed).")
     parser.add_argument("--skip-touch", action="store_true", help="Skip the interactive touch stage.")
     parser.add_argument("--skip-strict-crc", action="store_true", help="Skip optional strict packet/tile CRC validation.")
     parser.add_argument("--quick", action="store_true", help="Use shorter animation and touch stages.")
@@ -187,23 +194,31 @@ def parse_args() -> argparse.Namespace:
         parser.error("--touch-fps must be positive")
     if not 0 <= args.brightness <= 100:
         parser.error("--brightness must be in the range 0..100")
+    if not 0 <= args.vid <= 0xFFFF or not 0 <= args.pid <= 0xFFFF:
+        parser.error("--vid and --pid must be 16-bit USB identifiers")
     return args
 
 
 def choose_font(size: int, *, bold: bool = False):
-    """Load DejaVu Sans from standard Linux locations, with a usable fallback."""
+    """Load a scalable system font on Linux or Windows."""
     filename = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    windows_fonts = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
     candidates = (
         Path("/usr/share/fonts/truetype/dejavu") / filename,
         Path("/usr/share/fonts/dejavu") / filename,
         Path("/usr/share/fonts/TTF") / filename,
+        windows_fonts / ("segoeuib.ttf" if bold else "segoeui.ttf"),
+        windows_fonts / ("arialbd.ttf" if bold else "arial.ttf"),
     )
     for candidate in candidates:
         try:
             return ImageFont.truetype(str(candidate), size=size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 FONT_12 = choose_font(12)
@@ -1822,9 +1837,15 @@ def session_abort_stage(display: RemoteDisplay, report: Report) -> None:
         stage.set(protocol=info.protocol_version, abort_recovery=True, ping=True)
 
 
-def strict_crc_stage(report: Report, hold: float) -> None:
+def strict_crc_stage(report: Report, hold: float, *, vid: int, pid: int) -> None:
     with Stage(report, "OPTIONAL STRICT CRC", "packet CRC plus staged-tile content CRC") as stage:
-        with RemoteDisplay.open(timeout_ms=1800, strict_packet_crc=True, strict_tile_crc=True) as display:
+        with RemoteDisplay.open(
+            vid=vid,
+            pid=pid,
+            timeout_ms=1800,
+            strict_packet_crc=True,
+            strict_tile_crc=True,
+        ) as display:
             require_capabilities(display, strict=True)
             raw = checker_rgb565(45, 60)
             expected = bytearray(solid_rgb565(SCREEN_WIDTH, SCREEN_HEIGHT, INK))
@@ -1886,7 +1907,10 @@ def final_screen(display: RemoteDisplay, hold: float, report: Report, brightness
 def write_report(report: Report, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "project_version": report.project_version,
         "library_protocol": report.library_protocol,
+        "usb_vid": report.usb_vid,
+        "usb_pid": report.usb_pid,
         "started_utc": report.started_utc,
         "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "stages": [asdict(stage) for stage in report.stages],
@@ -1908,13 +1932,16 @@ def main() -> int:
             "RGB565 pixels differ from no-dither)."
         )
         return 0
-    report = Report()
+    report = Report(usb_vid=args.vid, usb_pid=args.pid)
     report_path = args.report or ROOT / "reports" / f"functional_test_{time.strftime('%Y%m%d_%H%M%S')}.json"
 
     print("RP2350 Remote Display Python Library Functional Test")
-    print(f"Project release: {PROJECT_VERSION}; library protocol: {PROTOCOL_VERSION}; test image: {ASSET_PATH.name}")
+    print(
+        f"Project release: {PROJECT_VERSION}; library protocol: {PROTOCOL_VERSION}; "
+        f"USB: {args.vid:04X}:{args.pid:04X}; test image: {ASSET_PATH.name}"
+    )
 
-    with RemoteDisplay.open(timeout_ms=1800) as display:
+    with RemoteDisplay.open(vid=args.vid, pid=args.pid, timeout_ms=1800) as display:
         require_capabilities(display)
         assert display.info is not None
         print(f"Connected: {display.info}")
@@ -1976,9 +2003,9 @@ def main() -> int:
         crc_diagnostic_stage(display, args.hold_seconds, report)
 
     if not args.skip_strict_crc:
-        strict_crc_stage(report, args.hold_seconds)
+        strict_crc_stage(report, args.hold_seconds, vid=args.vid, pid=args.pid)
 
-    with RemoteDisplay.open(timeout_ms=1800) as display:
+    with RemoteDisplay.open(vid=args.vid, pid=args.pid, timeout_ms=1800) as display:
         require_capabilities(display)
         final_screen(display, args.hold_seconds, report, args.brightness)
 

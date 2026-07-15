@@ -2,7 +2,9 @@
 
 This directory contains firmware for the Waveshare RP2350 Touch AMOLED 2.41 board. The firmware owns panel initialization, the 450×600 RGB565 framebuffer, PSRAM allocation, touch sampling, USB transport, device text, the resource cache, and the board RTC interface.
 
-The current firmware development version is **1.2.17.dev0**. It exposes the display through USB protocol **16**. Use host and firmware artifacts from the same release or checkout. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
+The current firmware development version is **1.2.18.dev0**. It exposes the display through USB protocol **16**. Use host and firmware artifacts from the same release or checkout. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
+
+One UF2 supports both Linux and Windows hosts. Linux uses the vendor interface through system libusb and the supplied udev rule. Windows 11 reads the firmware's Microsoft OS 2.0 descriptors and automatically binds the same interface to its inbox WinUSB driver; no custom INF or manual driver-association tool is required.
 
 ## Build requirements
 
@@ -10,6 +12,8 @@ The current firmware development version is **1.2.17.dev0**. It exposes the disp
 - Python 3
 - Arm GNU toolchain with `arm-none-eabi-gcc`
 - Raspberry Pi Pico SDK with TinyUSB initialized
+
+The supplied `build.sh` helper is a Bash workflow documented for Linux and WSL. Native Windows users can flash a prebuilt UF2 and run the Python host without building firmware locally.
 
 Set `PICO_SDK_PATH` or provide `--sdk`:
 
@@ -34,11 +38,13 @@ build/rp2350_remote_display.uf2
 
 Put the board in BOOTSEL mode and copy `build/rp2350_remote_display.uf2` to the mounted boot volume. The board reboots into normal firmware after the copy completes.
 
-Run the full host-to-device validation from the repository root after flashing:
+Run the full host-to-device validation from the repository root on Linux after flashing:
 
 ```bash
 ./functional-test/run.sh
 ```
+
+For native Windows validation of the same UF2, follow the [Windows hardware-test instructions](../docs/windows-11.md#run-the-physical-functional-test-natively).
 
 ## Build configuration
 
@@ -67,7 +73,7 @@ The default performance profile uses a 250 MHz RP2350 system clock and a 133 MHz
 
 The accepted system-clock range is 120–250 MHz. Test panel output, touch, USB, and PSRAM behavior after changing either value or using a different board. Record both values with hardware test results.
 
-The default USB identity is `0xCAFE:0x4010` for development. Replace it with an appropriate assigned identity before distributing hardware, then update `../python/udev/60-rp2350-remote-display.rules` to match.
+The default USB identity is `0xCAFE:0x4010` for development. Replace it with an appropriate assigned identity before distributing hardware, then update `../python/udev/60-rp2350-remote-display.rules` and any host configuration to match. Changing the VID/PID does not require a separate Linux and Windows firmware build; the Microsoft descriptors remain part of the same firmware image.
 
 ## Firmware behavior
 

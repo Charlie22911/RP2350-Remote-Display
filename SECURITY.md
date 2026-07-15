@@ -13,6 +13,7 @@ If private reporting is unavailable, open a minimal issue asking the maintainer 
 ## Security boundaries
 
 - The display protocol is designed for a directly connected USB device. It does not authenticate or encrypt commands. Grant USB interface access only to trusted local users and applications.
+- USB interface ownership is exclusive. On Windows, attaching the display to WSL transfers it away from native Windows applications; close or detach one owner before allowing the other to control the display.
 - Development firmware uses the shared prototype identity `0xCAFE:0x4010`. Its per-board USB serial supports deterministic selection but is not an authentication credential; neither value proves that a connected device is genuine.
 - `sync_rtc_from_ntp()` uses unauthenticated SNTP. Use it only with a trusted network and time source when time integrity matters.
 - Published SHA-256 values detect accidental corruption or an artifact that differs from the release record. They do not by themselves authenticate the publisher.

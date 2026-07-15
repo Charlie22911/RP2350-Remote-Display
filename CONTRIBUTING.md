@@ -17,11 +17,13 @@ Run a clean firmware build and the physical functional test when a change affect
 ./functional-test/run.sh
 ```
 
+Changes to USB enumeration, host discovery, packaged USB backends, or platform-specific setup should be validated on each affected host operating system. The same firmware image is expected to remain compatible with Linux and Windows; follow [docs/testing.md](docs/testing.md) for the native Windows hardware command and cross-platform regression expectations.
+
 Document changes that affect setup, supported hardware, public API behavior, protocol behavior, or test expectations. Update the canonical page for the topic instead of adding a duplicate explanation.
 
 ## Release-version changes
 
-`VERSION` defines the current project version. Development checkouts use a value such as `1.2.17.dev0`; published releases use the corresponding final value such as `1.2.17`. Release preparation must keep the Python package, firmware build metadata, functional-test metadata, changelogs, and current documentation aligned. Run the consistency check before committing:
+`VERSION` defines the current project version. Development checkouts use a value such as `1.2.18.dev0`; published releases use the corresponding final value such as `1.2.18`. Release preparation must keep the Python package, firmware build metadata, functional-test metadata, changelogs, and current documentation aligned. Run the consistency check before committing:
 
 ```bash
 python3 scripts/check-version-consistency.py
