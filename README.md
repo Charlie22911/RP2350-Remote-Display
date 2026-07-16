@@ -15,8 +15,8 @@ The USB protocol version is the compatibility boundary. The host and firmware ex
 
 | Component | Current release or requirement |
 |---|---|
-| Project version | 1.2.18.dev0 (development) |
-| Latest release | [1.2.16](https://github.com/Charlie22911/RP2350-Remote-Display/releases/tag/1.2.16) |
+| Project version | 1.2.18 |
+| Latest release | [1.2.18](https://github.com/Charlie22911/RP2350-Remote-Display/releases/tag/1.2.18) |
 | Firmware/Python compatibility | Use matching versions from the same release or checkout |
 | USB protocol | 16 |
 | Board | Waveshare RP2350 Touch AMOLED 2.41 |
@@ -31,7 +31,7 @@ The development firmware uses USB vendor ID `0xCAFE` and product ID `0x4010`. Us
 
 The quickest route does not require a firmware toolchain. Download the UF2 and its SHA-256 checksum from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases), verify the checksum, put the board in BOOTSEL mode, and copy the UF2 to its mounted boot volume.
 
-Windows 11 can perform this BOOTSEL copy directly. Firmware from the 1.2.18 development line publishes Microsoft OS descriptors so Windows automatically binds its inbox WinUSB driver; no custom INF or driver-association tool is required. The same firmware image continues to work on Linux. Native Windows hosting also requires the Python package from this development line, or a future 1.2.18-or-newer release. See the [Windows 11 guide](docs/windows-11.md).
+Windows 11 can perform this BOOTSEL copy directly. Firmware release 1.2.18 or later compatible firmware publishes Microsoft OS descriptors so Windows automatically binds its inbox WinUSB driver; no custom INF or driver-association tool is required. The same firmware image continues to work on Linux. Native Windows hosting requires the matching 1.2.18-or-newer Python package. See the [Windows 11 guide](docs/windows-11.md).
 
 ### Build from source on Linux
 

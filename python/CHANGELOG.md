@@ -1,6 +1,6 @@
-## Unreleased
+## 1.2.18
 
-- Identifies post-1.2.16 development builds as `1.2.18.dev0` instead of reusing the published release version.
+- Finalizes project and package metadata for release `1.2.18`.
 - Adds native Windows 11 AMD64 hosting through the firmware's automatic WinUSB association and a conditional `libusb-package` backend dependency.
 - Uses the same firmware and USB display protocol on Linux and Windows while retaining WSL 2 as an optional, exclusively owned USB path.
 - Adds Python 3.14 and cross-platform package, unit-test, and preflight coverage, plus physical hardware validation on both supported hosts.

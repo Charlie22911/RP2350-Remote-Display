@@ -1,8 +1,8 @@
 # Functional-test release notes
 
-## Unreleased
+## 1.2.18
 
-- Tracks the `1.2.18.dev0` development package and stabilization work after the 1.2.16 release.
+- Aligns functional-test metadata with project release `1.2.18`.
 - Supports physical native Windows validation through the packaged libusb backend while retaining the Linux runner and the same firmware image.
 - Adds a PowerShell setup/runner, Windows system-font fallbacks, and configurable `--vid` and `--pid` selection for native or custom-identity hardware runs.
 - Records the project version and tested USB identity in JSON reports.

@@ -1,6 +1,6 @@
 # Windows 11 guide
 
-RP2350 Remote Display supports native USB hosting on 64-bit x86 Windows 11 (AMD64) with firmware and Python software from the 1.2.18 development line or a later compatible release. The firmware publishes Microsoft OS 2.0 descriptors, so Windows automatically associates the normal display interface with its inbox WinUSB driver. The Python package installs its packaged libusb backend dependency on Windows AMD64.
+RP2350 Remote Display supports native USB hosting on 64-bit x86 Windows 11 (AMD64) with firmware and Python software from release 1.2.18 or later compatible versions. The firmware publishes Microsoft OS 2.0 descriptors, so Windows automatically associates the normal display interface with its inbox WinUSB driver. The Python package installs its packaged libusb backend dependency on Windows AMD64.
 
 No Zadig step, project-specific INF, or separate libusb DLL download is required. The same firmware image and display protocol continue to work on Linux.
 
@@ -17,11 +17,11 @@ BOOTSEL flashing is separate from both host paths. Windows mounts the board's RO
 
 ## Flash compatible firmware
 
-1. Obtain `rp2350_remote_display.uf2` from the same 1.2.18-line checkout or release as the Python package. A release download should include a published SHA-256 value; a locally built development artifact will not have a publisher-provided value. Firmware from 1.2.16 and earlier does not advertise WinUSB automatically.
+1. Obtain `rp2350_remote_display-1.2.18.uf2` and its matching `.uf2.sha2` checksum from release 1.2.18, or use later compatible firmware and host software from the same release. A locally built development artifact will not have a publisher-provided checksum. Firmware from 1.2.16 and earlier does not advertise WinUSB automatically.
 2. In PowerShell, calculate the downloaded file's hash:
 
    ```powershell
-   Get-FileHash .\rp2350_remote_display.uf2 -Algorithm SHA256
+   Get-FileHash .\rp2350_remote_display-1.2.18.uf2 -Algorithm SHA256
    ```
 
 3. For a release download, compare the entire displayed hash with the published value. For a local development build, record the calculated hash with the test results.

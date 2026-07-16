@@ -33,7 +33,7 @@ The supplied bootstrap supports Debian, Ubuntu, Arch Linux, and CachyOS. Other d
 
 Download the UF2 and checksum file from the [GitHub releases page](https://github.com/Charlie22911/RP2350-Remote-Display/releases). Verify the SHA-256 value, put the board in BOOTSEL mode, and copy the UF2 to the mounted boot volume. This flashing path works directly on Windows 11 and Linux and does not require the Pico SDK.
 
-Use matching firmware and Python artifacts from the same release. Native Windows hosting requires firmware and host software from the 1.2.18 development line or a later compatible release; earlier published firmware does not advertise WinUSB automatically. Continue with the host setup below when the board shows `WAITING FOR HOST`.
+Use matching firmware and Python artifacts from the same release. Native Windows hosting requires firmware and host software from release 1.2.18 or later compatible versions; earlier published firmware does not advertise WinUSB automatically. Continue with the host setup below when the board shows `WAITING FOR HOST`.
 
 ### Build and set up on Linux
 

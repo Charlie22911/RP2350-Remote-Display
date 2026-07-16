@@ -24,7 +24,7 @@ from .layout import CoordinateSpace, DebugOverlay, Layout, Rect
 from .rtc import NtpQueryError, NtpSample, RtcNtpSyncResult, RtcReading, query_ntp
 from .protocol import PROTOCOL_VERSION, TILE_PROFILES, TileProfile, rgb565
 
-__version__ = "1.2.18.dev0"
+__version__ = "1.2.18"
 
 __all__ = [
     "__version__",
