@@ -2,7 +2,7 @@
 
 This directory contains firmware for the Waveshare RP2350 Touch AMOLED 2.41 board. The firmware owns panel initialization, the 450×600 RGB565 framebuffer, PSRAM allocation, touch sampling, USB transport, device text, the resource cache, and the board RTC interface.
 
-The current firmware development version is **1.2.18.dev0**. It exposes the display through USB protocol **16**. Use host and firmware artifacts from the same release or checkout. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
+The current firmware release is **1.2.18**. It exposes the display through USB protocol **16**. Use host and firmware artifacts from the same release or checkout. See the repository [protocol reference](../docs/protocol.md) for the transport contract.
 
 One UF2 supports both Linux and Windows hosts. Linux uses the vendor interface through system libusb and the supplied udev rule. Windows 11 reads the firmware's Microsoft OS 2.0 descriptors and automatically binds the same interface to its inbox WinUSB driver; no custom INF or manual driver-association tool is required.
 

@@ -81,7 +81,7 @@ Do not regenerate an artifact after producing `SHA256SUMS`. A checksum detects a
 ## Publish and advance development
 
 1. Create an immutable `MAJOR.MINOR.PATCH` tag at the verified release commit.
-2. Create the GitHub release from that tag and attach the single cross-platform UF2, wheel, source distribution, `SHA256SUMS`, build-provenance record, and relevant Linux and Windows functional-test reports.
+2. Create the GitHub release from that tag and attach the versioned single cross-platform UF2, its `.uf2.sha2` checksum, the wheel, source distribution, `SHA256SUMS`, build-provenance record, and relevant Linux and Windows functional-test reports.
 3. State supported hardware, protocol, default clock, known limitations, and whether the release is a prerelease.
 4. Verify the downloaded artifacts and perform one clean install from the release page.
 5. Advance `main` to the next `.dev0` version and restore `Unreleased` changelog sections before accepting additional user-visible changes.

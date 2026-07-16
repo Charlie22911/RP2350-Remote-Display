@@ -2,7 +2,7 @@
 
 `rp2350-remote-display` is the Linux and Windows host library for RP2350 Remote Display. It opens the board over USB, checks protocol compatibility, sends drawing commands, receives touch events, and provides helpers for images, text, caching, dirty updates, layout, diagnostics, and RTC access. One firmware image supports both host operating systems.
 
-This checkout is development version **1.2.18.dev0** of the project and Python library. Use firmware from the same release or checkout; both sides speak USB **protocol 16**.
+This checkout is release **1.2.18** of the project and Python library. Use firmware from the same release or checkout; both sides speak USB **protocol 16**.
 
 ## Requirements
 
@@ -12,7 +12,7 @@ This checkout is development version **1.2.18.dev0** of the project and Python l
 - PyUSB and a libusb backend. Linux uses the system libusb library; installation on Windows AMD64 brings in `libusb-package` automatically.
 - Linux USB permission to claim the vendor interface, or the automatically selected Windows WinUSB driver.
 
-Native Windows hosting requires firmware from the 1.2.18 development line or a later compatible release. That firmware publishes Microsoft OS descriptors so Windows selects its inbox WinUSB driver without Zadig or a custom INF. Windows ARM64 is not currently supported by the packaged backend. WSL 2 remains an alternative, but Windows and WSL cannot own the same display simultaneously. See the [Windows 11 guide](../docs/windows-11.md).
+Native Windows hosting requires firmware release 1.2.18 or later compatible firmware. That firmware publishes Microsoft OS descriptors so Windows selects its inbox WinUSB driver without Zadig or a custom INF. Windows ARM64 is not currently supported by the packaged backend. WSL 2 remains an alternative, but Windows and WSL cannot own the same display simultaneously. See the [Windows 11 guide](../docs/windows-11.md).
 
 ## Install from this repository on Linux
 

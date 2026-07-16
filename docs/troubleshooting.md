@@ -25,7 +25,7 @@ The command adds the selected user to the `rp2350-display` group. A newly added 
 Native Windows hosting requires all of the following:
 
 - 64-bit x86 Windows 11 (AMD64).
-- Firmware from the 1.2.18 development line or a later compatible release.
+- Firmware release 1.2.18 or later compatible firmware.
 - A matching Python package installation, which brings in `libusb-package` on Windows AMD64.
 
 BOOTSEL mode and normal display mode are different USB devices. The BOOTSEL device appears as a removable drive; the normal firmware shows `WAITING FOR HOST` and should use Microsoft's WinUSB driver. In Device Manager, open the normal device's properties, confirm that the driver provider is Microsoft, and check that **Driver Details** lists `WinUSB.sys`. Do not use Zadig or install a custom INF for compatible firmware.
